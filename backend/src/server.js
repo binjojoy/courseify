@@ -8,9 +8,17 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const configuredFrontendOrigin = process.env.FRONTEND_URL?.replace(/\/$/, '');
+
+function isAllowedOrigin(origin) {
+  if (!origin || origin === configuredFrontendOrigin) return true;
+  return /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin) || origin === 'http://localhost:5173';
+}
 
 app.use(cors({
-  origin: '*',
+  origin(origin, callback) {
+    callback(null, isAllowedOrigin(origin));
+  },
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));

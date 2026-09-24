@@ -1,5 +1,7 @@
 import { Course, VideoItem } from '../types';
 
+const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+
 export interface PlaylistResponse {
   course: Course;
   videos: VideoItem[];
@@ -22,7 +24,7 @@ export async function fetchPlaylist(url: string): Promise<PlaylistResponse> {
   }
 
   try {
-    const res = await fetch('/api/playlist', {
+    const res = await fetch(`${API_URL}/api/playlist`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -50,7 +52,7 @@ export async function fetchPlaylist(url: string): Promise<PlaylistResponse> {
 export async function fetchVideoDescription(videoId: string): Promise<string> {
   if (!videoId) return '';
   try {
-    const res = await fetch(`/api/video/${videoId}/description`);
+    const res = await fetch(`${API_URL}/api/video/${videoId}/description`);
     if (!res.ok) return '';
     const data = await res.json().catch(() => ({}));
     return data.description || '';

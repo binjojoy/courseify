@@ -83,6 +83,41 @@ The frontend Vite development server runs on `http://localhost:5173`.
 
 ---
 
+## ☁️ Deploying with Vercel and Render
+
+Deploy the frontend to Vercel and the backend as a Render Web Service.
+
+### Render backend
+
+- Root directory: `backend`
+- Build command: `npm install`
+- Start command: `npm start`
+- Environment variables:
+
+```env
+YOUTUBE_API_KEY=your_api_key_here
+```
+
+`PORT` is assigned automatically by Render. `FRONTEND_URL` is optional; the backend accepts Vercel deployment domains automatically. Set it if you use a custom frontend domain.
+
+### Vercel frontend
+
+- Root directory: `frontend`
+- Framework preset: `Vite`
+- Build command: `npm run build`
+- Output directory: `dist`
+- Environment variable:
+
+```env
+VITE_API_URL=https://your-render-backend.onrender.com
+```
+
+Replace the value with the URL of the deployed Render backend. Do not add a trailing slash.
+
+The frontend uses the local Vite proxy during development and `VITE_API_URL` in production.
+
+---
+
 ## 📖 How to Use
 
 1. **Create a Course**:
