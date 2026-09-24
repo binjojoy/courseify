@@ -191,7 +191,7 @@ class StorageService {
   toggleVideoCompletion(courseId: string, videoId: string): { completed: boolean; courseCompleteTriggered: boolean } {
     const progress = this.getCourseProgress(courseId);
     const videos = this.getCourseVideos(courseId);
-    const currentStatus = !progress.videos[videoId]?.completed;
+    const currentStatus = !!progress.videos[videoId]?.completed;
     const newStatus = !currentStatus;
 
     if (!progress.videos[videoId]) {

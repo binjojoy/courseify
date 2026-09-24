@@ -113,6 +113,10 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
             videoId: videoId,
             startSeconds: initialPositionSec || 0
           });
+          playerRef.current.setPlaybackQuality?.('default');
+          playerRef.current.unloadModule?.('captions');
+          setCcEnabled(false);
+          setCurrentQuality('auto');
           setIsLoading(false);
           return;
         } catch (e) {
@@ -120,7 +124,6 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
         }
       }
 
-      // controls: 0 hides ALL YouTube native UI — our custom overlay is the sole control surface
       try {
         playerRef.current = new window.YT.Player(containerRef.current, {
           videoId: videoId,
@@ -129,15 +132,13 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
             start: Math.floor(initialPositionSec || 0),
             modestbranding: 1,
             rel: 0,
-            controls: 0,          // ← hide native YouTube controls entirely
-            disablekb: 1,         // ← disable native keyboard shortcuts (we handle them)
-            iv_load_policy: 3,    // ← hide annotations
-            fs: 0,                // ← hide native fullscreen button
-            cc_load_policy: 0,    // ← don't auto-show captions
+            controls: 0,
+            disablekb: 1,
+            iv_load_policy: 3,
+            fs: 0,
+            cc_load_policy: 0,
             enablejsapi: 1,
             playsinline: 1,
-            showinfo: 0,
-            autohide: 1,
             widget_referrer: window.location.origin,
             origin: window.location.origin
           },
@@ -149,6 +150,10 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
                 event.target.seekTo(initialPositionSec, true);
               }
               try {
+                event.target.setPlaybackQuality?.('default');
+                event.target.unloadModule?.('captions');
+                setCcEnabled(false);
+                setCurrentQuality('auto');
                 const dur = event.target.getDuration();
                 if (dur) setDuration(dur);
                 const vol = event.target.getVolume();
@@ -269,6 +274,10 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     return () => {
       isMounted = false;
       if (intervalRef.current) clearInterval(intervalRef.current);
+      if (playerRef.current && typeof playerRef.current.destroy === 'function') {
+        playerRef.current.destroy();
+        playerRef.current = null;
+      }
     };
   }, [videoId, courseId]);
 
@@ -450,7 +459,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     if (!playerRef.current) return;
     try {
       playerRef.current.setPlaybackQuality?.(quality);
-      setCurrentQuality(quality);
+      setCurrentQuality(quality === 'default' ? 'auto' : quality);
       setIsSettingsOpen(false);
     } catch {}
   };
@@ -551,7 +560,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
           )}
 
           {/* YouTube Embed Container — 1:1 exact aspect ratio, no zoom, original size */}
-          <div className="absolute inset-0 overflow-hidden">
+          <div className="absolute inset-0 overflow-hidden pointer-events-none">
             <div
               ref={containerRef}
               className="w-full h-full"
@@ -564,15 +573,6 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
             onClick={togglePlay}
             onDoubleClick={toggleFullscreen}
           />
-
-          {/* Large center play icon when paused */}
-          {!isPlaying && !isLoading && (
-            <div className="absolute inset-0 flex items-center justify-center z-15 pointer-events-none">
-              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center">
-                <span className="material-symbols-outlined text-white text-[36px] sm:text-[44px]">play_arrow</span>
-              </div>
-            </div>
-          )}
 
           {/* ============ Custom Player Controls Overlay ============ */}
           <div
