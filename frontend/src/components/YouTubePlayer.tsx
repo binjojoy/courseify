@@ -189,6 +189,12 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
                 setIsLoading(true);
               }
             },
+            onPlaybackQualityChange: (event: any) => {
+              if (!isMounted) return;
+              if (event.data) {
+                setCurrentQuality(event.data);
+              }
+            },
             onError: (err: any) => {
               console.error('YouTube player error:', err.data);
               if (isMounted) {
@@ -231,6 +237,18 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
           // Buffer progress
           const fraction = playerRef.current.getVideoLoadedFraction?.() || 0;
           setBufferedPercent(fraction * 100);
+
+          // Sync current playback quality from YouTube API
+          const realQuality = playerRef.current.getPlaybackQuality?.();
+          if (realQuality && realQuality !== 'unknown') {
+            setCurrentQuality(realQuality);
+          }
+
+          // Fetch available qualities if not loaded yet
+          const avail = playerRef.current.getAvailableQualityLevels?.();
+          if (avail && avail.length > 0 && availableQualities.length === 0) {
+            setAvailableQualities(avail);
+          }
 
           if (cur !== undefined && dur !== undefined) {
             if (onTimeUpdate) onTimeUpdate(cur, dur);
@@ -412,12 +430,20 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     try {
       if (ccEnabled) {
         playerRef.current.unloadModule?.('captions');
+        if (typeof playerRef.current.setOption === 'function') {
+          playerRef.current.setOption('captions', 'track', {});
+        }
         setCcEnabled(false);
       } else {
         playerRef.current.loadModule?.('captions');
+        if (typeof playerRef.current.setOption === 'function') {
+          playerRef.current.setOption('captions', 'track', { languageCode: 'en' });
+        }
         setCcEnabled(true);
       }
-    } catch {}
+    } catch {
+      setCcEnabled((prev) => !prev);
+    }
   }, [ccEnabled]);
 
   const handleQualityChange = (quality: string) => {
@@ -524,11 +550,11 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
             </div>
           )}
 
-          {/* YouTube Embed Container — Scaled and cropped to completely eliminate YouTube watermark, logo, and title overlay */}
-          <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          {/* YouTube Embed Container — 1:1 exact aspect ratio, no zoom, original size */}
+          <div className="absolute inset-0 overflow-hidden">
             <div
               ref={containerRef}
-              className="w-full h-full transform scale-[1.14] origin-center"
+              className="w-full h-full"
             />
           </div>
 
@@ -691,16 +717,18 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
                   onClick={toggleCaptions}
                   aria-label="Toggle captions"
                   title={ccEnabled ? 'Turn off captions (c)' : 'Turn on captions (c)'}
-                  className={`w-8 h-8 flex items-center justify-center rounded hover:bg-white/10 transition-colors focus:outline-none ${
+                  className={`h-8 px-1.5 flex items-center gap-1 rounded hover:bg-white/10 transition-colors focus:outline-none ${
                     ccEnabled ? 'text-white' : 'text-[#CBD5E1]'
                   }`}
                 >
-                  <span className="material-symbols-outlined text-[20px]">
+                  <span className="material-symbols-outlined text-[19px]">
                     {ccEnabled ? 'closed_caption' : 'closed_caption_disabled'}
                   </span>
-                  {ccEnabled && (
-                    <span className="absolute bottom-0.5 w-4 h-[2px] bg-[#3B82F6] rounded-full" />
-                  )}
+                  <span className={`text-[10px] font-mono font-bold px-1 py-0.5 rounded leading-none ${
+                    ccEnabled ? 'bg-blue-600 text-white' : 'bg-white/10 text-[#94A3B8]'
+                  }`}>
+                    {ccEnabled ? 'ON' : 'OFF'}
+                  </span>
                 </button>
 
                 {/* Playback Speed selector */}
@@ -740,11 +768,14 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
                     type="button"
                     onClick={() => { setIsSettingsOpen(!isSettingsOpen); setIsSpeedMenuOpen(false); }}
                     aria-label="Settings"
-                    title="Quality settings"
-                    className="w-8 h-8 flex items-center justify-center rounded hover:bg-white/10 text-[#CBD5E1] hover:text-white transition-colors focus:outline-none"
+                    title={`Quality: ${qualityLabels[currentQuality] || currentQuality}`}
+                    className="h-8 px-2 flex items-center gap-1 rounded hover:bg-white/10 text-[#CBD5E1] hover:text-white transition-colors focus:outline-none"
                   >
-                    <span className={`material-symbols-outlined text-[20px] transition-transform duration-300 ${isSettingsOpen ? 'rotate-45' : ''}`}>
+                    <span className={`material-symbols-outlined text-[18px] transition-transform duration-300 ${isSettingsOpen ? 'rotate-45' : ''}`}>
                       settings
+                    </span>
+                    <span className="text-[11px] font-mono font-medium text-white/90">
+                      {qualityLabels[currentQuality] || currentQuality}
                     </span>
                   </button>
 

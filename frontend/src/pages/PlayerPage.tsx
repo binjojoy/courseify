@@ -237,29 +237,33 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
       <div className="flex flex-col lg:flex-row w-full h-[calc(100vh-56px)] overflow-hidden bg-bg-canvas text-text-primary">
         {/* Main Column: Player and Content Stage */}
         <div className="flex-1 flex flex-col h-full overflow-y-auto overflow-x-hidden">
-          {/* Pinned Video Player Viewport */}
-          <section className="relative w-full aspect-video bg-player-black select-none shrink-0 overflow-hidden border-b border-border-default">
-            {currentVideo ? (
-              <YouTubePlayer
-                videoId={currentVideo.videoId}
-                courseId={course.id}
-                initialPositionSec={initialPosition}
-                autoplayNext={autoplayNext}
-                onNextVideo={handleNextVideo}
-                onPrevVideo={handlePrevVideo}
-                onTimeUpdate={(cur) => setCurrentTimeSec(cur)}
-                onAutoComplete={(vid) => {
-                  if (!progress.videos[vid]?.completed) {
-                    handleToggleComplete(vid);
-                  }
-                }}
-              />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-text-muted">
-                No playable video in course
+          {/* Video Player Viewport Container with Margin & Spacing */}
+          <div className="w-full bg-[#030712] flex justify-center border-b border-border-default dark:border-slate-800">
+            <section className="relative w-full max-w-[1280px] aspect-video bg-player-black select-none shrink-0 overflow-hidden px-2 sm:px-4 md:px-6 py-2 sm:py-3">
+              <div className="relative w-full h-full rounded-xl overflow-hidden shadow-2xl bg-black">
+                {currentVideo ? (
+                  <YouTubePlayer
+                    videoId={currentVideo.videoId}
+                    courseId={course.id}
+                    initialPositionSec={initialPosition}
+                    autoplayNext={autoplayNext}
+                    onNextVideo={handleNextVideo}
+                    onPrevVideo={handlePrevVideo}
+                    onTimeUpdate={(cur) => setCurrentTimeSec(cur)}
+                    onAutoComplete={(vid) => {
+                      if (!progress.videos[vid]?.completed) {
+                        handleToggleComplete(vid);
+                      }
+                    }}
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-text-muted">
+                    No playable video in course
+                  </div>
+                )}
               </div>
-            )}
-          </section>
+            </section>
+          </div>
 
           {/* Mobile Tab Strip (Only on screens < 1024px) */}
           <div className="lg:hidden flex flex-col bg-bg-surface border-b border-border-default sticky top-0 z-30">
