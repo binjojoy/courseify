@@ -269,10 +269,26 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
         </div>
 
         {/* Footer */}
-        <footer className="w-full pb-6 pt-6 z-10 flex flex-col items-center">
+        <footer className="w-full pb-8 pt-6 z-10 flex flex-col items-center gap-3">
           <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-bg-surface/80 border border-border-default shadow-xs text-text-muted text-[13px] font-medium">
             <span className="material-symbols-outlined text-[16px] text-text-muted">lock</span>
             <span>Courses and notes are kept private in this browser. No account needed.</span>
+          </div>
+
+          <div className="flex items-center gap-4 text-xs text-text-muted">
+            <button
+              onClick={() => onNavigate('privacy' as any)}
+              className="hover:text-accent transition-colors hover:underline"
+            >
+              Privacy Policy
+            </button>
+            <span>•</span>
+            <button
+              onClick={() => onNavigate('terms' as any)}
+              className="hover:text-accent transition-colors hover:underline"
+            >
+              Terms of Service
+            </button>
           </div>
         </footer>
       </div>

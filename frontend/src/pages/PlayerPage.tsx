@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Course, VideoItem, CourseProgress, CourseNotes } from '../types';
+import { Course, VideoItem, CourseProgress, CourseNotes, FavoriteVideo } from '../types';
 import { storage } from '../services/storage';
+import { fetchVideoDescription } from '../services/api';
 import { YouTubePlayer } from '../components/YouTubePlayer';
 import { PlaylistSidebar } from '../components/PlaylistSidebar';
 import { NotesSection } from '../components/NotesSection';
@@ -32,8 +33,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
   const [autoplayNext, setAutoplayNext] = useState<boolean>(storage.getSettings().autoplayNext);
   const [isCourseCompleteModalOpen, setIsCourseCompleteModalOpen] = useState(false);
   const [activeTabMobile, setActiveTabMobile] = useState<'videos' | 'notes' | 'about'>('videos');
-
-  const playerSeekFuncRef = useRef<((sec: number) => void) | null>(null);
+  const [isFav, setIsFav] = useState<boolean>(false);
 
   // Sync state if courseId changes or data updates
   const reloadData = () => {
@@ -57,6 +57,23 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
     const unsub = storage.subscribe(reloadData);
     return unsub;
   }, [courseId]);
+
+  // Check and fetch description dynamically if missing
+  useEffect(() => {
+    if (!currentVideoId) return;
+    setIsFav(storage.isFavorite(currentVideoId));
+
+    const current = videos.find(v => v.videoId === currentVideoId);
+    if (current && (!current.description || current.description.trim() === '')) {
+      fetchVideoDescription(currentVideoId).then(desc => {
+        if (desc) {
+          const updated = videos.map(v => v.videoId === currentVideoId ? { ...v, description: desc } : v);
+          setVideos(updated);
+          storage.saveCourseVideos(courseId, updated);
+        }
+      }).catch(() => {});
+    }
+  }, [currentVideoId, videos, courseId]);
 
   const currentVideo = videos.find(v => v.videoId === currentVideoId) || videos[0];
   const currentIndex = videos.findIndex(v => v.videoId === currentVideoId);
@@ -95,7 +112,6 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
   };
 
   const handleSeek = (sec: number) => {
-    // Seek YouTube player
     const iframe = document.querySelector('iframe');
     if (iframe && iframe.contentWindow) {
       iframe.contentWindow.postMessage(
@@ -115,14 +131,35 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
     onShowToast('Course progress reset. Enjoy rewatching!');
   };
 
+  const handleToggleFavorite = () => {
+    if (!currentVideo || !course) return;
+    const favItem: FavoriteVideo = {
+      courseId: course.id,
+      courseTitle: course.title,
+      videoId: currentVideo.videoId,
+      title: currentVideo.title,
+      durationFormatted: currentVideo.durationFormatted,
+      thumbnailUrl: currentVideo.thumbnailUrl,
+      addedAt: new Date().toISOString()
+    };
+    const nowFav = storage.toggleFavorite(favItem);
+    setIsFav(nowFav);
+    onShowToast(nowFav ? 'Added lesson to Favorites' : 'Removed from Favorites');
+  };
+
   // Convert description text: render clickable links & timestamps
   const renderDescription = (text: string) => {
-    if (!text) return 'No description provided for this lesson.';
+    if (!text || text.trim() === '') {
+      return (
+        <div className="py-2 text-text-muted italic text-sm">
+          No written description available for this lesson.
+        </div>
+      );
+    }
 
     const urlRegex = /(https?:\/\/[^\s]+)/g;
     const timeRegex = /\b(\d{1,2}:\d{2}(?::\d{2})?)\b/g;
 
-    // Split by URLs first
     const urlParts = text.split(urlRegex);
 
     return urlParts.map((urlPart, i) => {
@@ -133,14 +170,13 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
             href={urlPart}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-accent hover:underline font-medium focus:outline-none"
+            className="text-accent hover:underline font-medium focus:outline-none break-all"
           >
             {urlPart}
           </a>
         );
       }
 
-      // Then split by timestamps
       const timeParts = urlPart.split(timeRegex);
       return timeParts.map((subPart, j) => {
         const timeMatch = subPart.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
@@ -161,14 +197,13 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
             </button>
           );
         }
-        return subPart;
+        return <span key={`${i}-${j}`}>{subPart}</span>;
       });
     });
   };
 
   const metrics = storage.getCourseMetrics(courseId);
 
-  // Format watched vs total duration
   const formatDurationText = (sec: number) => {
     const h = Math.floor(sec / 3600);
     const m = Math.floor((sec % 3600) / 60);
@@ -180,7 +215,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
       <main className="w-full pt-14 bg-bg-canvas min-h-screen flex items-center justify-center p-6 text-center">
         <div className="max-w-md flex flex-col items-center">
           <span className="material-symbols-outlined text-[48px] text-text-muted mb-4">
-            alert_circle
+            warning
           </span>
           <h2 className="text-xl font-bold text-text-primary mb-2">We couldn't find that course</h2>
           <p className="text-sm text-text-secondary mb-6">
@@ -211,6 +246,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
                 initialPositionSec={initialPosition}
                 autoplayNext={autoplayNext}
                 onNextVideo={handleNextVideo}
+                onPrevVideo={handlePrevVideo}
                 onTimeUpdate={(cur) => setCurrentTimeSec(cur)}
                 onAutoComplete={(vid) => {
                   if (!progress.videos[vid]?.completed) {
@@ -225,7 +261,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
             )}
           </section>
 
-          {/* Mobile Tab Strip (Only on small screens < 1024px) */}
+          {/* Mobile Tab Strip (Only on screens < 1024px) */}
           <div className="lg:hidden flex flex-col bg-bg-surface border-b border-border-default sticky top-0 z-30">
             {/* Progress strip */}
             <div className="h-11 px-4 flex items-center justify-between text-xs border-b border-border-default">
@@ -300,8 +336,28 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
                 </div>
               </div>
 
-              {/* Prev/Next and Mark Complete Buttons */}
+              {/* Action Buttons: Prev/Next, Favorite, Complete */}
               <div className="flex items-center gap-2 self-start shrink-0">
+                {/* Favorite Star Button */}
+                <button
+                  type="button"
+                  onClick={handleToggleFavorite}
+                  title={isFav ? 'Remove from favorites' : 'Add to favorites'}
+                  className={`w-10 h-10 flex items-center justify-center rounded-lg border transition-colors ${
+                    isFav
+                      ? 'bg-amber-500/10 border-amber-500/30 text-amber-500'
+                      : 'bg-bg-surface border-border-default text-text-muted hover:text-text-primary hover:bg-bg-hover'
+                  }`}
+                >
+                  <span
+                    className="material-symbols-outlined text-[20px]"
+                    style={{ fontVariationSettings: isFav ? "'FILL' 1" : "'FILL' 0" }}
+                  >
+                    star
+                  </span>
+                </button>
+
+                {/* Prev / Next */}
                 <div className="flex items-center rounded-lg bg-bg-surface border border-border-default p-0.5 shadow-xs">
                   <button
                     type="button"
@@ -324,9 +380,9 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
                   </button>
                 </div>
 
+                {/* Mark Complete */}
                 <button
                   type="button"
-                  id="markCompleteBtn"
                   onClick={() => currentVideo && handleToggleComplete(currentVideo.videoId)}
                   className={`h-10 px-4 flex items-center gap-2 rounded-lg border text-sm font-medium transition-colors focus:outline-none cursor-pointer shadow-xs ${
                     isCurrentVideoCompleted
@@ -348,22 +404,24 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
               <div className={`pt-6 border-t border-border-default flex flex-col ${activeTabMobile !== 'about' ? 'hidden lg:flex' : 'flex'}`}>
                 <div
                   id="descContent"
-                  className={`text-sm text-text-secondary leading-relaxed transition-all ${
-                    !isDescExpanded ? 'line-clamp-3' : ''
+                  className={`text-sm text-text-secondary leading-relaxed transition-all whitespace-pre-line ${
+                    !isDescExpanded ? 'line-clamp-4' : ''
                   }`}
                 >
                   {renderDescription(currentVideo?.description || '')}
                 </div>
 
-                <div className="mt-2.5">
-                  <button
-                    type="button"
-                    onClick={() => setIsDescExpanded(!isDescExpanded)}
-                    className="text-accent hover:underline text-xs font-semibold focus:outline-none transition-colors"
-                  >
-                    {isDescExpanded ? 'Show less' : 'Show more'}
-                  </button>
-                </div>
+                {currentVideo?.description && currentVideo.description.length > 150 && (
+                  <div className="mt-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setIsDescExpanded(!isDescExpanded)}
+                      className="text-accent hover:underline text-xs font-semibold focus:outline-none transition-colors"
+                    >
+                      {isDescExpanded ? 'Show less' : 'Show more'}
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Notes Workspace Block */}

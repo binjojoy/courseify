@@ -3,10 +3,10 @@ import { storage } from '../services/storage';
 import { UserProfile, AppSettings } from '../types';
 
 interface NavbarProps {
-  currentView: 'home' | 'dashboard' | 'player';
+  currentView: string;
   courseTitle?: string;
   courseId?: string;
-  onNavigate: (view: 'home' | 'dashboard' | 'player', courseId?: string) => void;
+  onNavigate: (view: 'home' | 'dashboard' | 'player' | 'privacy' | 'terms', courseId?: string) => void;
   onOpenNamePrompt: () => void;
   onOpenRemoveCourse?: (courseId: string) => void;
   onRefreshPlaylist?: () => void;
@@ -103,7 +103,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     <header className="fixed top-0 left-0 right-0 z-50 h-14 bg-bg-surface/95 dark:bg-[#0F172A]/90 backdrop-blur-md border-b border-border-default/80">
       <div className={`h-14 ${currentView === 'player' ? 'w-full px-4 sm:px-6' : 'max-w-[1240px] mx-auto px-4 md:px-6 lg:px-8'} flex items-center justify-between`}>
         {/* Left Side: Logo & Navigation */}
-        <div className="flex items-center gap-3 min-w-0 max-w-[calc(100%-140px)]">
+        <div className="flex items-center gap-3 min-w-0 max-w-[calc(100%-180px)]">
           {currentView === 'player' ? (
             <>
               <button
@@ -130,53 +130,40 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             </>
           ) : (
-            <>
-              <button
-                onClick={() => onNavigate('home')}
-                className="flex items-center gap-2.5 focus:outline-none group"
-              >
-                <div className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center text-white shadow-sm shrink-0">
-                  <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
-                    <polygon points="6 4 20 12 6 20 6 4"></polygon>
-                  </svg>
-                </div>
-                <span className="text-[18px] font-bold text-text-primary tracking-tight">
-                  Courseify
-                </span>
-              </button>
-
-              {/* Navigation links for Dashboard & Create */}
-              <nav className="flex items-center gap-1 ml-4 sm:ml-6">
-                <button
-                  onClick={() => onNavigate('home')}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
-                    currentView === 'home'
-                      ? 'text-accent bg-accent-subtle'
-                      : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
-                  }`}
-                >
-                  <span className="material-symbols-outlined text-[18px]">add_circle</span>
-                  <span>Create</span>
-                </button>
-
-                <button
-                  onClick={() => onNavigate('dashboard')}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
-                    currentView === 'dashboard'
-                      ? 'text-accent bg-accent-subtle'
-                      : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
-                  }`}
-                >
-                  <span className="material-symbols-outlined text-[18px]">grid_view</span>
-                  <span>Dashboard</span>
-                </button>
-              </nav>
-            </>
+            <button
+              onClick={() => onNavigate('home')}
+              className="flex items-center gap-2.5 focus:outline-none group"
+            >
+              <div className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center text-white shadow-sm shrink-0 transition-transform group-hover:scale-105">
+                <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+                  <polygon points="6 4 20 12 6 20 6 4"></polygon>
+                </svg>
+              </div>
+              <span className="text-[18px] font-bold text-text-primary tracking-tight">
+                Courseify
+              </span>
+            </button>
           )}
         </div>
 
-        {/* Right Side: Theme Toggle & Avatar Menu */}
+        {/* Right Side: Dashboard Link, Theme Toggle, Avatar Menu */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          {/* Dashboard Icon Button on Right Side */}
+          {currentView !== 'player' && (
+            <button
+              onClick={() => onNavigate(currentView === 'dashboard' ? 'home' : 'dashboard')}
+              aria-label={currentView === 'dashboard' ? 'Create course' : 'Go to dashboard'}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                currentView === 'dashboard'
+                  ? 'text-accent bg-accent-subtle font-semibold'
+                  : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[19px]">grid_view</span>
+              <span className="hidden sm:inline">Dashboard</span>
+            </button>
+          )}
+
           {/* Player Course Overflow Menu */}
           {currentView === 'player' && (
             <div className="relative" ref={courseMenuRef}>
@@ -243,17 +230,23 @@ export const Navbar: React.FC<NavbarProps> = ({
             </span>
           </button>
 
-          {/* User Profile Avatar with dropdown */}
+          {/* User Profile Avatar with visible status indicator badge */}
           <div className="relative" ref={avatarMenuRef}>
-            <button
-              onClick={() => setIsAvatarOpen(!isAvatarOpen)}
-              aria-label={`User profile: ${displayName}`}
-              className="relative rounded-full ring-2 ring-border-default hover:ring-accent transition-all focus:outline-none flex items-center justify-center w-8 h-8 bg-blue-600 text-white font-semibold text-xs overflow-hidden select-none"
-              type="button"
-            >
-              <span>{initialLetter}</span>
-              <span className="absolute bottom-0 right-0 w-2 h-2 bg-success rounded-full ring-2 ring-bg-surface"></span>
-            </button>
+            <div className="relative inline-flex items-center">
+              <button
+                onClick={() => setIsAvatarOpen(!isAvatarOpen)}
+                aria-label={`User profile: ${displayName}`}
+                className="relative rounded-full ring-2 ring-border-default hover:ring-accent transition-all focus:outline-none flex items-center justify-center w-8 h-8 bg-blue-600 text-white font-semibold text-xs select-none"
+                type="button"
+              >
+                <span>{initialLetter}</span>
+              </button>
+              {/* Fully visible green status dot positioned outside overflow */}
+              <span
+                className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 rounded-full border-2 border-bg-surface dark:border-[#0F172A] shadow-xs pointer-events-none z-10"
+                title="Active workspace"
+              ></span>
+            </div>
 
             {isAvatarOpen && (
               <div className="absolute right-0 mt-2 w-60 bg-bg-elevated rounded-lg shadow-xl border border-border-default p-1 text-sm z-50 animate-fadeIn">

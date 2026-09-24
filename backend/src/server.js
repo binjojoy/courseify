@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { getPlaylistData, extractPlaylistId, extractVideoId } from './services/youtube.js';
+import { getPlaylistData, extractPlaylistId, extractVideoId, fetchVideoDescription } from './services/youtube.js';
 import { SAMPLE_COURSES } from './data/sampleCourses.js';
 
 dotenv.config();
@@ -24,6 +24,19 @@ app.get('/api/health', (req, res) => {
     service: 'courseify-backend',
     timestamp: new Date().toISOString()
   });
+});
+
+// Fetch detailed description for a specific video ID
+app.get('/api/video/:videoId/description', async (req, res) => {
+  const { videoId } = req.params;
+  if (!videoId) return res.status(400).json({ error: 'INVALID_ID' });
+
+  try {
+    const description = await fetchVideoDescription(videoId);
+    res.json({ videoId, description });
+  } catch (err) {
+    res.status(500).json({ error: 'FETCH_ERROR', description: '' });
+  }
 });
 
 // Get list of preloaded sample courses

@@ -2,6 +2,11 @@ import { parseISODuration, formatTime, formatDurationHuman } from '../utils/dura
 import { SAMPLE_COURSES } from '../data/sampleCourses.js';
 
 /**
+ * In-memory LRU cache for fetched video descriptions to avoid repeated requests
+ */
+const videoDescCache = new Map();
+
+/**
  * Parse colon formatted duration like "4:17:12" or "14:20" or "00:45"
  * @param {string} str 
  * @returns {number} duration in seconds
@@ -75,6 +80,58 @@ export function extractVideoId(input) {
 }
 
 /**
+ * Fetch detailed video description for a single video ID from its public watch page
+ * @param {string} videoId
+ * @returns {Promise<string>}
+ */
+export async function fetchVideoDescription(videoId) {
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return '';
+  if (videoDescCache.has(videoId)) return videoDescCache.get(videoId);
+
+  try {
+    const url = `https://www.youtube.com/watch?v=${videoId}`;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9'
+      }
+    });
+
+    if (!response.ok) return '';
+    const html = await response.text();
+
+    let desc = '';
+    // Look for shortDescription marker
+    const marker = '"shortDescription":"';
+    const start = html.indexOf(marker);
+    if (start !== -1) {
+      const end = html.indexOf('","', start + marker.length);
+      if (end !== -1) {
+        const raw = html.substring(start + marker.length, end);
+        try {
+          desc = JSON.parse(`"${raw.replace(/"/g, '\\"')}"`);
+        } catch {
+          desc = raw.replace(/\\n/g, '\n').replace(/\\"/g, '"');
+        }
+      }
+    }
+
+    if (!desc) {
+      // Fallback: meta description tag
+      const metaMatch = html.match(/<meta\s+name=["']description["']\s+content=["'](.*?)["']/i);
+      if (metaMatch) desc = metaMatch[1];
+    }
+
+    desc = (desc || '').substring(0, 4000);
+    videoDescCache.set(videoId, desc);
+    return desc;
+  } catch (err) {
+    console.warn(`Failed to fetch description for video ${videoId}:`, err.message);
+    return '';
+  }
+}
+
+/**
  * Fetch and scrape single video info when a single YouTube video URL is supplied
  */
 async function scrapeSingleVideo(videoId) {
@@ -99,6 +156,21 @@ async function scrapeSingleVideo(videoId) {
   let description = '';
   let durationSec = 0;
 
+  // Extract description via shortDescription or json
+  const marker = '"shortDescription":"';
+  const start = html.indexOf(marker);
+  if (start !== -1) {
+    const end = html.indexOf('","', start + marker.length);
+    if (end !== -1) {
+      const raw = html.substring(start + marker.length, end);
+      try {
+        description = JSON.parse(`"${raw.replace(/"/g, '\\"')}"`);
+      } catch {
+        description = raw.replace(/\\n/g, '\n');
+      }
+    }
+  }
+
   if (match) {
     try {
       const data = JSON.parse(match[1]);
@@ -112,7 +184,7 @@ async function scrapeSingleVideo(videoId) {
       if (secondaryInfo?.owner?.videoOwnerRenderer?.title?.runs?.[0]?.text) {
         channelTitle = secondaryInfo.owner.videoOwnerRenderer.title.runs[0].text;
       }
-      if (secondaryInfo?.attributedDescription?.content) {
+      if (!description && secondaryInfo?.attributedDescription?.content) {
         description = secondaryInfo.attributedDescription.content;
       }
     } catch (e) {}
@@ -128,7 +200,7 @@ async function scrapeSingleVideo(videoId) {
     videoId,
     position: 0,
     title,
-    description: description.substring(0, 2000),
+    description: description.substring(0, 3000),
     durationSec,
     durationFormatted: durationSec ? formatTime(durationSec) : '00:00',
     thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
@@ -143,7 +215,7 @@ async function scrapeSingleVideo(videoId) {
     videoCount: 1,
     totalDurationSec: durationSec,
     totalDurationFormatted: durationSec ? formatDurationHuman(durationSec) : 'Single Lesson',
-    description: description.substring(0, 2000),
+    description: description.substring(0, 3000),
     addedAt: new Date().toISOString(),
     lastOpenedAt: new Date().toISOString()
   };
@@ -251,7 +323,7 @@ async function fetchViaYouTubeAPI(playlistId, apiKey) {
       videoId: vId,
       position: pos++,
       title,
-      description: (durInfo.description || item.snippet?.description || '').substring(0, 2000),
+      description: (durInfo.description || item.snippet?.description || '').substring(0, 3000),
       durationSec: durInfo.durationSec,
       durationFormatted: durInfo.durationFormatted,
       thumbnailUrl: item.snippet?.thumbnails?.medium?.url || item.snippet?.thumbnails?.default?.url || `https://i.ytimg.com/vi/${vId}/hqdefault.jpg`,
@@ -403,6 +475,13 @@ async function scrapeYouTubePlaylist(playlistId) {
     throw new Error('EMPTY_PLAYLIST');
   }
 
+  // Preload first video description in background if empty
+  if (videos[0]?.videoId) {
+    fetchVideoDescription(videos[0].videoId).then(desc => {
+      if (desc && videos[0]) videos[0].description = desc;
+    }).catch(() => {});
+  }
+
   const course = {
     id: playlistId,
     title,
@@ -411,7 +490,7 @@ async function scrapeYouTubePlaylist(playlistId) {
     videoCount: videos.length,
     totalDurationSec,
     totalDurationFormatted: formatDurationHuman(totalDurationSec),
-    description: description.substring(0, 2000),
+    description: description.substring(0, 3000),
     addedAt: new Date().toISOString(),
     lastOpenedAt: new Date().toISOString()
   };
@@ -428,7 +507,6 @@ export async function getPlaylistData(inputUrl) {
   const playlistId = extractPlaylistId(inputUrl);
 
   if (!playlistId) {
-    // Check if it's a single video link
     const singleVideoId = extractVideoId(inputUrl);
     if (singleVideoId) {
       return await scrapeSingleVideo(singleVideoId);
@@ -452,6 +530,5 @@ export async function getPlaylistData(inputUrl) {
     }
   }
 
-  // Scraper path
   return await scrapeYouTubePlaylist(playlistId);
 }

@@ -1,5 +1,5 @@
 export interface Course {
-  id: string; // playlistId
+  id: string; // playlistId or videoId
   title: string;
   channelTitle: string;
   thumbnailUrl: string;
@@ -42,6 +42,16 @@ export interface VideoNote {
 
 export type CourseNotes = Record<string, VideoNote>;
 
+export interface FavoriteVideo {
+  courseId: string;
+  courseTitle: string;
+  videoId: string;
+  title: string;
+  durationFormatted: string;
+  thumbnailUrl: string;
+  addedAt: string;
+}
+
 export interface UserProfile {
   name: string;
 }
@@ -51,6 +61,7 @@ export interface AppSettings {
   autoCompleteOnEnd: boolean;
   autoCompleteThreshold: number; // e.g. 0.90 (90%)
   theme: 'light' | 'dark';
+  dailyFocusGoalMinutes?: number; // e.g. 60 min
 }
 
 export type SortOption = 'recently_watched' | 'recently_added' | 'progress' | 'title';
@@ -71,4 +82,6 @@ export interface LearningStats {
   coursesCompleted: number;
   dayStreak: number;
   avgHoursPerDay: number;
+  dailyMinutesStudied: number;
+  weeklyHours: { day: string; hours: number }[];
 }

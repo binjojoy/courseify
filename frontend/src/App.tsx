@@ -9,7 +9,11 @@ import { ConfirmDialog } from './components/ConfirmDialog';
 import { NamePromptModal } from './components/NamePromptModal';
 import { Toast } from './components/Toast';
 
-type ViewMode = 'home' | 'dashboard' | 'player';
+import { PrivacyPage } from './pages/PrivacyPage';
+import { TermsPage } from './pages/TermsPage';
+import { NotFoundPage } from './pages/NotFoundPage';
+
+type ViewMode = 'home' | 'dashboard' | 'player' | 'privacy' | 'terms' | 'notfound';
 
 export const App: React.FC = () => {
   // Always start on create course page ('home' / '#/add') by default
@@ -22,6 +26,7 @@ export const App: React.FC = () => {
   const [removeTargetCourse, setRemoveTargetCourse] = useState<Course | null>(null);
   const [isNamePromptOpen, setIsNamePromptOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastUndoAction, setToastUndoAction] = useState<{ label: string; onUndo: () => void; durationMs?: number } | null>(null);
 
   // Parse location hash on load and hashchange
   const parseRoute = () => {
@@ -43,13 +48,23 @@ export const App: React.FC = () => {
       const searchParams = new URLSearchParams(parts[1] || '');
       const videoId = searchParams.get('v') || undefined;
 
+      const course = storage.getCourse(courseId);
+      if (!course) {
+        setCurrentView('notfound');
+        return;
+      }
+
       setActiveCourseId(courseId);
       setActiveVideoId(videoId);
       setCurrentView('player');
     } else if (hash === 'dashboard') {
       setCurrentView('dashboard');
+    } else if (hash === 'privacy') {
+      setCurrentView('privacy');
+    } else if (hash === 'terms') {
+      setCurrentView('terms');
     } else {
-      setCurrentView('home');
+      setCurrentView('notfound');
     }
   };
 
@@ -76,14 +91,24 @@ export const App: React.FC = () => {
       window.location.hash = '#/dashboard';
     } else if (view === 'home') {
       window.location.hash = '#/add';
+    } else if (view === 'privacy') {
+      window.location.hash = '#/privacy';
+    } else if (view === 'terms') {
+      window.location.hash = '#/terms';
     }
   };
 
-  const showToast = (msg: string) => {
+  const showToast = (
+    msg: string,
+    undoAction?: { label: string; onUndo: () => void; durationMs?: number }
+  ) => {
     setToastMessage(msg);
+    setToastUndoAction(undoAction || null);
+    const duration = undoAction?.durationMs || 4000;
     setTimeout(() => {
       setToastMessage((prev) => (prev === msg ? null : prev));
-    }, 4000);
+      setToastUndoAction((prev) => (prev?.label === undoAction?.label ? null : prev));
+    }, duration);
   };
 
   const handleConfirmReset = () => {
@@ -94,15 +119,44 @@ export const App: React.FC = () => {
     }
   };
 
+  // 5-second soft delete with Undo button
   const handleConfirmRemove = () => {
-    if (removeTargetCourse) {
-      storage.removeCourse(removeTargetCourse.id);
-      showToast(`Course "${removeTargetCourse.title}" was removed.`);
-      setRemoveTargetCourse(null);
-      if (currentView === 'player' && activeCourseId === removeTargetCourse.id) {
-        navigateTo('dashboard');
-      }
+    if (!removeTargetCourse) return;
+
+    const courseToRestore = removeTargetCourse;
+    const videosToRestore = storage.getCourseVideos(courseToRestore.id);
+    const progressToRestore = storage.getCourseProgress(courseToRestore.id);
+    const notesToRestore = storage.getCourseNotes(courseToRestore.id);
+
+    // Remove from storage
+    storage.removeCourse(courseToRestore.id);
+    setRemoveTargetCourse(null);
+
+    if (currentView === 'player' && activeCourseId === courseToRestore.id) {
+      navigateTo('dashboard');
     }
+
+    // Show 5-second undo prompt
+    showToast(`Course "${courseToRestore.title}" deleted.`, {
+      label: 'Undo',
+      durationMs: 5000,
+      onUndo: () => {
+        // Restore course, videos, progress, notes
+        storage.addOrUpdateCourse(courseToRestore);
+        if (videosToRestore.length > 0) {
+          storage.saveCourseVideos(courseToRestore.id, videosToRestore);
+        }
+        if (progressToRestore) {
+          storage.saveCourseProgress(courseToRestore.id, progressToRestore);
+        }
+        if (notesToRestore && Object.keys(notesToRestore).length > 0) {
+          storage.saveCourseNotes(courseToRestore.id, notesToRestore);
+        }
+        showToast(`Course "${courseToRestore.title}" restored!`);
+        // Trigger re-render by refreshing view or dispatching event
+        window.dispatchEvent(new Event('storage'));
+      },
+    });
   };
 
   const activeCourse = activeCourseId ? storage.getCourse(activeCourseId) : null;
@@ -149,6 +203,21 @@ export const App: React.FC = () => {
         />
       )}
 
+      {currentView === 'privacy' && (
+        <PrivacyPage onBack={() => navigateTo('home')} />
+      )}
+
+      {currentView === 'terms' && (
+        <TermsPage onBack={() => navigateTo('home')} />
+      )}
+
+      {currentView === 'notfound' && (
+        <NotFoundPage
+          onGoHome={() => navigateTo('home')}
+          onGoDashboard={() => navigateTo('dashboard')}
+        />
+      )}
+
       {/* Reset Progress Confirmation Dialog */}
       <ConfirmDialog
         isOpen={!!resetTargetCourse}
@@ -183,8 +252,15 @@ export const App: React.FC = () => {
         onSkip={() => setIsNamePromptOpen(false)}
       />
 
-      {/* Toast Notification */}
-      <Toast message={toastMessage} onClose={() => setToastMessage(null)} />
+      {/* Toast Notification with Undo Action */}
+      <Toast
+        message={toastMessage}
+        undoAction={toastUndoAction}
+        onClose={() => {
+          setToastMessage(null);
+          setToastUndoAction(null);
+        }}
+      />
     </div>
   );
 };
