@@ -1,0 +1,671 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}</style><style>:root{color-scheme:light dark;--md-bg:#fff;--md-text:rgba(0,0,0,.8);--md-muted:rgba(0,0,0,.6);--md-fill:rgba(0,0,0,.04);--md-fill-strong:rgba(0,0,0,.06);--md-rule:rgba(0,0,0,.1);--md-rule-strong:rgba(0,0,0,.16);--md-link:hsl(210 100% 45%)}@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){--md-bg:#0d0d0d;--md-text:rgba(255,255,255,.85);--md-muted:rgba(255,255,255,.6);--md-fill:rgba(255,255,255,.06);--md-fill-strong:rgba(255,255,255,.09);--md-rule:rgba(255,255,255,.14);--md-rule-strong:rgba(255,255,255,.22);--md-link:hsl(210 100% 72%)}}:root[data-theme="dark"]{color-scheme:dark;--md-bg:#0d0d0d;--md-text:rgba(255,255,255,.85);--md-muted:rgba(255,255,255,.6);--md-fill:rgba(255,255,255,.06);--md-fill-strong:rgba(255,255,255,.09);--md-rule:rgba(255,255,255,.14);--md-rule-strong:rgba(255,255,255,.22);--md-link:hsl(210 100% 72%)}:root[data-theme="light"]{color-scheme:light}@media print{:root,:root[data-theme="dark"]{color-scheme:light;--md-bg:#fff;--md-text:rgba(0,0,0,.8);--md-muted:rgba(0,0,0,.6);--md-fill:rgba(0,0,0,.04);--md-fill-strong:rgba(0,0,0,.06);--md-rule:rgba(0,0,0,.1);--md-rule-strong:rgba(0,0,0,.16);--md-link:hsl(210 100% 45%)}}body{background:var(--md-bg);color:var(--md-text);max-width:720px;margin:0 auto;padding:32px;display:flex;flex-direction:column;gap:10px;font:14px/1.55 -apple-system,BlinkMacSystemFont,'SF Pro','Segoe UI',sans-serif;overflow-wrap:break-word}body>:first-child{margin-top:0}h1,h2,h3,h4,h5,h6{margin:6px 0 0;line-height:1.25;font-weight:600;text-wrap:balance}h1{font-size:1.35em}h2{font-size:1.15em;color:var(--md-muted)}h3,h4,h5,h6{font-size:1em}p,ul,ol,blockquote,table,pre,hr{margin:0}strong{font-weight:600}a{color:var(--md-link);text-decoration:none}a:hover{text-decoration:underline}ul,ol{display:flex;flex-direction:column;gap:6px;padding-left:22px}ul{list-style:disc}ol{list-style:decimal}:is(li,td,th)>*+:is(p,ul,ol,blockquote){margin-top:6px}blockquote{display:flex;flex-direction:column;gap:10px;border-left:2px solid var(--md-rule);padding-left:10px;color:var(--md-muted)}:not(pre)>code{background:var(--md-fill);padding:1px 3px;border-radius:4px;font:.92em 'SF Mono',ui-monospace,Menlo,Consolas,monospace}a>code{background:none;color:inherit}pre{background:var(--md-fill);padding:10px 12px;border-radius:6px;overflow-x:auto;font:12px/1.5 'SF Mono',ui-monospace,Menlo,Consolas,monospace;margin-block:4px}pre code{background:none;padding:0;font:inherit}table{width:100%;border-collapse:separate;border-spacing:2px;font:inherit}th,td{padding:6px 8px;border-radius:3px;text-align:left;vertical-align:top}th{background:var(--md-fill-strong);font-weight:600}td{background:var(--md-fill)}:is(th,td) :not(pre)>code{background:transparent}hr{border:0;border-top:1px solid var(--md-rule-strong);margin-block:10px}img{max-width:100%;height:auto;border-radius:4px}</style>
+</head><body>
+<h1>YouTube Playlist Courseify — Product Requirements Document</h1>
+<p><strong>Version:</strong> 0.1 (Initial / MVP) · <strong>Status:</strong> Draft</p>
+<hr>
+<h2>1. Overview</h2>
+<p><strong>YouTube Playlist Courseify</strong> turns any public YouTube playlist into a structured, Udemy-style course. Videos are still streamed through YouTube's embedded player, while the app adds what YouTube's playlist UI lacks: progress tracking, per-video notes, completion state, and a dashboard for managing multiple courses.</p>
+<p><strong>Tagline:</strong> <em>Paste a playlist link. Turn it into a course.</em></p>
+<h3>Goals</h3>
+<ul>
+<li>Go from a playlist URL to a watchable course in under 10 seconds.</li>
+<li>Make progress (videos, watch time, %) visible at all times.</li>
+<li>Let learners keep notes per video and resume exactly where they left off.</li>
+<li>Work with zero sign-up: all data lives in the browser (LocalStorage).</li>
+</ul>
+<h3>Non-Goals (v1)</h3>
+<ul>
+<li>Authentication, accounts, or cloud sync</li>
+<li>Backend or database</li>
+<li>Hosting/downloading videos</li>
+<li>Quizzes, certificates, social or sharing features</li>
+<li>Support for private/unlisted-only playlists that the API cannot read</li>
+</ul>
+<h3>Target Users</h3>
+<p>Self-directed learners who follow long, sequential YouTube playlists (programming, languages, university lectures, etc.) and want a focused course experience.</p>
+<hr>
+<h2>2. User Stories</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>As a learner, I want to…</th>
+<th>So that…</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>U1</td>
+<td>paste a playlist URL and have it added as a course</td>
+<td>I don't set anything up manually</td>
+</tr>
+<tr>
+<td>U2</td>
+<td>watch videos in a player with the playlist beside it</td>
+<td>I can move through the course easily</td>
+</tr>
+<tr>
+<td>U3</td>
+<td>mark videos complete/incomplete</td>
+<td>I know what I've finished</td>
+</tr>
+<tr>
+<td>U4</td>
+<td>see completed count, watch time, and %</td>
+<td>I stay motivated</td>
+</tr>
+<tr>
+<td>U5</td>
+<td>write notes on each video</td>
+<td>I retain what I learn</td>
+</tr>
+<tr>
+<td>U6</td>
+<td>resume from my last watched video</td>
+<td>I don't lose my place</td>
+</tr>
+<tr>
+<td>U7</td>
+<td>see all my courses on a dashboard</td>
+<td>I can manage several at once</td>
+</tr>
+<tr>
+<td>U8</td>
+<td>remove a course</td>
+<td>I can clean up</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2>3. Information Architecture</h2>
+<p>Based on the sketch, there are <strong>three primary views</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>View</th>
+<th>Route</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Input View</td>
+<td><code>/</code> (or <code>/add</code>)</td>
+<td>Add a playlist</td>
+</tr>
+<tr>
+<td>Dashboard</td>
+<td><code>/dashboard</code></td>
+<td>List and manage courses</td>
+</tr>
+<tr>
+<td>Player View</td>
+<td><code>/course/:courseId?v=:videoId</code></td>
+<td>Watch, track, take notes</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Routing logic:</strong> First visit with no courses → Input View. Returning user with ≥1 course → Dashboard. The Dashboard always has an &quot;Add course&quot; action leading to the Input View.</p>
+<hr>
+<h2>4. Functional Requirements</h2>
+<h3>4.1 Input View</h3>
+<p><strong>Sketch reference:</strong> A bordered page with a centered label &quot;Enter your playlist link&quot;, a wide single-line input with an arrow/submit button at its right end, and the text &quot;Turn it into course&quot; below.</p>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Requirement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>IN-1</td>
+<td>Centered layout with heading &quot;Enter your playlist link&quot;, one URL input, and a submit (arrow) button inside/at the end of the input.</td>
+</tr>
+<tr>
+<td>IN-2</td>
+<td>Helper/CTA text: <strong>&quot;Turn it into a course&quot;</strong>.</td>
+</tr>
+<tr>
+<td>IN-3</td>
+<td>Submit on button click or Enter key.</td>
+</tr>
+<tr>
+<td>IN-4</td>
+<td>Validate the URL client-side. Accepted formats: <code>youtube.com/playlist?list=ID</code>, <code>youtube.com/watch?v=…&amp;list=ID</code>, <code>youtu.be/…?list=ID</code>. Extract <code>list</code> ID.</td>
+</tr>
+<tr>
+<td>IN-5</td>
+<td>Show inline errors: invalid URL, no playlist ID found, playlist not found/private, API/network failure, quota exceeded.</td>
+</tr>
+<tr>
+<td>IN-6</td>
+<td>Show a loading state (button spinner + &quot;Fetching playlist… 50/431 videos&quot;) during fetch.</td>
+</tr>
+<tr>
+<td>IN-7</td>
+<td>If the playlist was already added, don't duplicate it; open the existing course and show a notice.</td>
+</tr>
+<tr>
+<td>IN-8</td>
+<td>On success, save the course and navigate to the Player View at the first video.</td>
+</tr>
+</tbody>
+</table>
+<h3>4.2 Player View</h3>
+<p><strong>Sketch reference:</strong> Left ~⅔ of the screen holds the video player (with a three-dot menu at its top-right and control icons beneath it), then the video title/description block, then a &quot;Click to add note&quot; area. The right ~⅓ is a scrollable sidebar starting with a <strong>Progress <code>1/31</code></strong> row and a <strong>Watch time <code>2hr/5hr</code></strong> row, followed by a numbered list of videos, each with title, duration and a checkbox.</p>
+<pre><code class="language-text">┌──────────────────────────────────┬─────────────────────┐
+│                                  │ Progress   12 / 31  │
+│        YouTube embedded          │ Watch time 2h / 5h  │
+│        player (16:9)             ├─────────────────────┤
+│                                  │ 1. Video title  ☑   │
+├──────────────────────────────────┤    12:04            │
+│ Video title                      │ 2. Video title  ☐   │
+│ Description (collapsible)        │ 3. Video title  ☐   │
+├──────────────────────────────────┤ 4. …                │
+│ Notes — click to add note        │        (scrolls)    │
+└──────────────────────────────────┴─────────────────────┘
+</code></pre>
+<p><strong>Player</strong></p>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Requirement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PL-1</td>
+<td>Use the <strong>YouTube IFrame Player API</strong> (embedded player only).</td>
+</tr>
+<tr>
+<td>PL-2</td>
+<td>Player is responsive, 16:9, with native YouTube controls.</td>
+</tr>
+<tr>
+<td>PL-3</td>
+<td>Top-right menu (⋮) on the player area: back to dashboard, course info, remove course.</td>
+</tr>
+<tr>
+<td>PL-4</td>
+<td>Autoplay the next video when one ends (user-toggleable).</td>
+</tr>
+<tr>
+<td>PL-5</td>
+<td>Resume the video at the last saved timestamp when reopened.</td>
+</tr>
+<tr>
+<td>PL-6</td>
+<td>Save watch position periodically (every ~5s while playing) and on pause, video change, and page unload.</td>
+</tr>
+<tr>
+<td>PL-7</td>
+<td>Optional: auto-mark a video complete when it ends or reaches ≥90% watched (setting, on by default).</td>
+</tr>
+<tr>
+<td>PL-8</td>
+<td>Handle embed-restricted, deleted, or private videos with a clear message and a link to open on YouTube; allow skipping them.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Title, description, notes</strong></p>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Requirement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TD-1</td>
+<td>Show the current video's title below the player and its description below the title.</td>
+</tr>
+<tr>
+<td>TD-2</td>
+<td>Description is truncated with &quot;Show more&quot;; URLs are clickable; timestamps like <code>12:34</code> in descriptions seek the player.</td>
+</tr>
+<tr>
+<td>NT-1</td>
+<td>Notes area under the description: shows &quot;Click to add note&quot; when empty.</td>
+</tr>
+<tr>
+<td>NT-2</td>
+<td>Notes are plain text (Markdown optional later), tied to one video, editable at any time.</td>
+</tr>
+<tr>
+<td>NT-3</td>
+<td>Auto-save with debounce (~500ms) and a &quot;Saved&quot; indicator.</td>
+</tr>
+<tr>
+<td>NT-4</td>
+<td><strong>Nice to have:</strong> &quot;Insert current timestamp&quot; button that inserts a clickable timestamp into the note.</td>
+</tr>
+<tr>
+<td>NT-5</td>
+<td>Videos that have notes show a small note icon in the sidebar.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Playlist sidebar</strong></p>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Requirement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SB-1</td>
+<td>Header rows: <strong>Progress</strong> (<code>completed / total</code>) and <strong>Watch time</strong> (<code>watched / total duration</code>), with a slim progress bar.</td>
+</tr>
+<tr>
+<td>SB-2</td>
+<td>Numbered list in playlist order; each row: index, title (2-line clamp), duration, completion checkbox.</td>
+</tr>
+<tr>
+<td>SB-3</td>
+<td>Currently playing video is highlighted and auto-scrolled into view.</td>
+</tr>
+<tr>
+<td>SB-4</td>
+<td>Clicking a row loads that video; clicking the checkbox toggles completion <strong>without</strong> changing the current video.</td>
+</tr>
+<tr>
+<td>SB-5</td>
+<td>Completed rows are visually distinct (checkmark, muted title).</td>
+</tr>
+<tr>
+<td>SB-6</td>
+<td>Sidebar scrolls independently and performs well with 400+ videos (virtualized or windowed rendering).</td>
+</tr>
+<tr>
+<td>SB-7</td>
+<td>On mobile/tablet, sidebar moves below the player (or into a tab: <em>Videos / Notes</em>).</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Course completion</strong></p>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Requirement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CC-1</td>
+<td>When the last incomplete video is marked complete, show a congratulations modal/banner (confetti optional) with course title, total videos, total duration, and actions: <em>Back to Dashboard</em>, <em>Rewatch</em>.</td>
+</tr>
+<tr>
+<td>CC-2</td>
+<td>Completed courses show a &quot;Completed&quot; badge on the dashboard.</td>
+</tr>
+<tr>
+<td>CC-3</td>
+<td>Un-completing any video removes the completed state.</td>
+</tr>
+</tbody>
+</table>
+<h3>4.3 Course Progress</h3>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Requirement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PR-1</td>
+<td>Track: total videos, completed videos, total duration, completed duration, completion %.</td>
+</tr>
+<tr>
+<td>PR-2</td>
+<td><strong>Completed duration</strong> = sum of durations of videos marked complete + the watched portion of the in-progress video (optional refinement).</td>
+</tr>
+<tr>
+<td>PR-3</td>
+<td><strong>Completion %</strong> = completed videos ÷ total videos, rounded to the nearest integer. (Open question #2: duration-weighted alternative.)</td>
+</tr>
+<tr>
+<td>PR-4</td>
+<td>Display format example: <code>12 / 30 videos completed · 4h 25m / 10h 40m watched · 41% completed</code>.</td>
+</tr>
+<tr>
+<td>PR-5</td>
+<td>Progress is recalculated instantly on any completion change and is consistent between dashboard and player.</td>
+</tr>
+</tbody>
+</table>
+<h3>4.4 Dashboard</h3>
+<p><strong>Sketch reference:</strong> Header &quot;Welcome back, <em>Name</em>&quot;, a &quot;Your courses&quot; section with a grid of cards (thumbnail on top; below it playlist title, <code>58/431</code> and <code>12%</code>), and a large empty region at the bottom marked &quot;Fill space with something&quot;.</p>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Requirement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DB-1</td>
+<td>Greeting: &quot;Welcome back, {name}&quot;. The name is collected once (first-run prompt), stored locally, and editable. Falls back to &quot;Welcome back&quot; if unset.</td>
+</tr>
+<tr>
+<td>DB-2</td>
+<td>&quot;Your courses&quot; grid, responsive (1–4 columns).</td>
+</tr>
+<tr>
+<td>DB-3</td>
+<td><strong>Course card:</strong> thumbnail, title, channel name, video count, total duration, <code>completed/total</code>, <code>%</code>, progress bar, last watched video title, and a <strong>Continue Learning</strong> button.</td>
+</tr>
+<tr>
+<td>DB-4</td>
+<td>Clicking the card opens the course at its last watched video; if none, at video 1.</td>
+</tr>
+<tr>
+<td>DB-5</td>
+<td>Card overflow menu (⋮): Open, Reset progress (with confirmation), Remove course (with confirmation).</td>
+</tr>
+<tr>
+<td>DB-6</td>
+<td>Removing a course deletes its metadata, progress and notes after an explicit warning that notes will be lost.</td>
+</tr>
+<tr>
+<td>DB-7</td>
+<td>&quot;＋ Add course&quot; card/button leads to the Input View.</td>
+</tr>
+<tr>
+<td>DB-8</td>
+<td>Sorting: Recently watched (default), Recently added, Progress, Title.</td>
+</tr>
+<tr>
+<td>DB-9</td>
+<td><strong>Empty state:</strong> illustration, &quot;No courses yet&quot;, short explanation, and a primary &quot;Add your first course&quot; button.</td>
+</tr>
+<tr>
+<td>DB-10</td>
+<td><strong>Bottom area</strong> (the &quot;fill space&quot; region in the sketch) — see §4.5.</td>
+</tr>
+</tbody>
+</table>
+<h3>4.5 Dashboard &quot;Fill the Space&quot; Proposals</h3>
+<p>The sketch leaves the lower dashboard area open. Recommended for v1 (pick 2–3):</p>
+<ol>
+<li><strong>Continue where you left off</strong> — a wide banner for the most recently watched video with a Resume button. <em>(Highest value, low effort.)</em></li>
+<li><strong>Learning stats</strong> — total hours watched, videos completed, courses completed, current day streak.</li>
+<li><strong>Recent notes</strong> — last 3–5 notes with video/course links.</li>
+<li><strong>Weekly activity</strong> — a small 7-day bar chart of videos completed or minutes watched.</li>
+<li><strong>Quick add</strong> — an inline playlist URL field so users needn't leave the dashboard.</li>
+</ol>
+<hr>
+<h2>5. Data &amp; Storage</h2>
+<p>All user data is stored in LocalStorage under a versioned namespace (e.g. <code>courseify:v1:*</code>).</p>
+<h3>5.1 Keys</h3>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>courseify:v1:profile</code></td>
+<td><code>{ name }</code></td>
+</tr>
+<tr>
+<td><code>courseify:v1:settings</code></td>
+<td><code>{ autoplayNext, autoCompleteOnEnd, autoCompleteThreshold }</code></td>
+</tr>
+<tr>
+<td><code>courseify:v1:courses</code></td>
+<td>Array of course records (metadata only)</td>
+</tr>
+<tr>
+<td><code>courseify:v1:course:{id}:videos</code></td>
+<td>Video metadata for that course</td>
+</tr>
+<tr>
+<td><code>courseify:v1:course:{id}:progress</code></td>
+<td>Completion, positions, last watched</td>
+</tr>
+<tr>
+<td><code>courseify:v1:course:{id}:notes</code></td>
+<td>Notes keyed by videoId</td>
+</tr>
+</tbody>
+</table>
+<p>Splitting keys per course avoids rewriting one huge blob on every save.</p>
+<h3>5.2 Data Model</h3>
+<pre><code class="language-jsonc">// Course
+{
+  &#34;id&#34;: &#34;PLxxxxxxxx&#34;,            // playlistId
+  &#34;title&#34;: &#34;…&#34;,
+  &#34;channelTitle&#34;: &#34;…&#34;,
+  &#34;thumbnailUrl&#34;: &#34;https://i.ytimg.com/…&#34;,
+  &#34;videoCount&#34;: 31,
+  &#34;totalDurationSec&#34;: 18000,
+  &#34;addedAt&#34;: &#34;2026-09-24T10:00:00Z&#34;,
+  &#34;lastOpenedAt&#34;: &#34;…&#34;
+}
+
+// Video (in course:{id}:videos, ordered)
+{
+  &#34;videoId&#34;: &#34;abc123&#34;,
+  &#34;position&#34;: 0,
+  &#34;title&#34;: &#34;…&#34;,
+  &#34;description&#34;: &#34;…&#34;,
+  &#34;durationSec&#34;: 724,
+  &#34;thumbnailUrl&#34;: &#34;…&#34;,
+  &#34;unavailable&#34;: false
+}
+
+// Progress (course:{id}:progress)
+{
+  &#34;lastVideoId&#34;: &#34;abc123&#34;,
+  &#34;updatedAt&#34;: &#34;…&#34;,
+  &#34;completedAt&#34;: null,             // set when course is finished
+  &#34;videos&#34;: {
+    &#34;abc123&#34;: { &#34;completed&#34;: true, &#34;positionSec&#34;: 724, &#34;completedAt&#34;: &#34;…&#34; }
+  }
+}
+
+// Notes (course:{id}:notes)
+{ &#34;abc123&#34;: { &#34;text&#34;: &#34;…&#34;, &#34;updatedAt&#34;: &#34;…&#34; } }
+</code></pre>
+<h3>5.3 Storage Considerations</h3>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Requirement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ST-1</td>
+<td>Wrap all reads/writes in try/catch; recover gracefully from corrupted or missing data.</td>
+</tr>
+<tr>
+<td>ST-2</td>
+<td>Detect <code>QuotaExceededError</code> (LocalStorage is ~5 MB) and show a clear message suggesting removing a course.</td>
+</tr>
+<tr>
+<td>ST-3</td>
+<td>Cap stored description length (e.g. 2,000 chars) to keep large playlists (400+ videos) within quota.</td>
+</tr>
+<tr>
+<td>ST-4</td>
+<td>Include a <code>schemaVersion</code> and a migration path for future changes.</td>
+</tr>
+<tr>
+<td>ST-5</td>
+<td><strong>Export / Import JSON</strong> backup (recommended for v1.1) since clearing browser data erases everything.</td>
+</tr>
+<tr>
+<td>ST-6</td>
+<td>Sync across tabs using the <code>storage</code> event so two open tabs don't overwrite each other.</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2>6. YouTube API Integration</h2>
+<table>
+<thead>
+<tr>
+<th>Step</th>
+<th>Endpoint</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>playlists.list</code> (<code>part=snippet,contentDetails</code>)</td>
+<td>Playlist title, channel, thumbnail, item count</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>playlistItems.list</code> (<code>part=snippet,contentDetails</code>, <code>maxResults=50</code>)</td>
+<td>Paginate with <code>nextPageToken</code> until complete</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>videos.list</code> (<code>part=contentDetails,snippet</code>), batches of 50 IDs</td>
+<td>ISO-8601 duration (<code>PT1H2M3S</code>) → seconds; full descriptions</td>
+</tr>
+</tbody>
+</table>
+<p>Requirements and risks:</p>
+<ul>
+<li>Deleted/private videos appear in playlists; detect them (missing from <code>videos.list</code>, or title &quot;Private video&quot;/&quot;Deleted video&quot;) and mark <code>unavailable</code>. Exclude them from totals.</li>
+<li>Convert ISO-8601 durations robustly (including days for very long videos and <code>P0D</code> for live streams).</li>
+<li><strong>API key exposure:</strong> with no backend, the key ships in client code. Mitigate by restricting the key by HTTP referrer and to YouTube Data API v3 only. A tiny serverless proxy is the recommended upgrade path.</li>
+<li><strong>Quota:</strong> default 10,000 units/day. A 431-video playlist costs roughly 1 + 9 + 9 ≈ 19 units, so quota is not a v1 concern, but handle <code>quotaExceeded</code> errors.</li>
+<li>Provide a manual &quot;Refresh playlist&quot; action to sync new/removed videos while preserving progress and notes by <code>videoId</code>.</li>
+</ul>
+<hr>
+<h2>7. Non-Functional Requirements</h2>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Requirement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Performance</td>
+<td>Dashboard renders &lt; 1s; sidebar smooth with 500 videos; fetch of 400+ videos shows incremental progress.</td>
+</tr>
+<tr>
+<td>Responsiveness</td>
+<td>Desktop-first, fully usable on tablet and mobile.</td>
+</tr>
+<tr>
+<td>Accessibility</td>
+<td>Keyboard navigable, visible focus states, ARIA labels on checkboxes and player controls, WCAG AA contrast.</td>
+</tr>
+<tr>
+<td>Privacy</td>
+<td>No accounts or tracking; data never leaves the browser (except YouTube API/embed calls). Disclose this in the UI.</td>
+</tr>
+<tr>
+<td>Compatibility</td>
+<td>Latest Chrome, Edge, Firefox, Safari.</td>
+</tr>
+<tr>
+<td>Reliability</td>
+<td>Progress must never be lost on refresh, tab close, or crash (save on interval + <code>visibilitychange</code>/<code>beforeunload</code>).</td>
+</tr>
+<tr>
+<td>Theming</td>
+<td>Light and dark mode (dark strongly recommended for a learning app).</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2>8. Suggested Tech Stack</h2>
+<ul>
+<li><strong>Frontend:</strong> React + Vite (or Next.js in static mode), TypeScript</li>
+<li><strong>Styling:</strong> Tailwind CSS</li>
+<li><strong>State:</strong> Zustand (or Context + reducer) with a LocalStorage persistence layer</li>
+<li><strong>Routing:</strong> React Router</li>
+<li><strong>Player:</strong> YouTube IFrame Player API</li>
+<li><strong>Hosting:</strong> Vercel / Netlify / GitHub Pages (static)</li>
+</ul>
+<hr>
+<h2>9. Edge Cases</h2>
+<ul>
+<li>Playlist with 0 videos, or only unavailable videos</li>
+<li>Playlist &gt; 500 videos (still supported; warn about storage)</li>
+<li>Same video appearing twice in a playlist (key by <code>position</code>+<code>videoId</code> if needed)</li>
+<li>Playlist updated on YouTube after being added (Refresh action)</li>
+<li>User opens the same course in two tabs</li>
+<li>Video embedding disabled by the owner</li>
+<li>Offline or network failure while adding (no partial course is saved)</li>
+<li>User manually edits the URL to a course/video that doesn't exist → friendly 404 back to Dashboard</li>
+</ul>
+<hr>
+<h2>10. Success Metrics</h2>
+<p>Since v1 has no analytics, these apply if lightweight, privacy-friendly analytics are added later:</p>
+<ul>
+<li>% of visits where a playlist is successfully added</li>
+<li>Courses added per user</li>
+<li>Return rate (users opening a course on day 2+)</li>
+<li>Average completion % per course</li>
+<li>Notes created per course</li>
+</ul>
+<hr>
+<h2>11. Milestones</h2>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Scope</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>M1 – Foundation</strong></td>
+<td>Project setup, LocalStorage layer, YouTube fetch service, URL validation</td>
+</tr>
+<tr>
+<td><strong>M2 – Core loop</strong></td>
+<td>Input View → Player View with sidebar, completion toggle, resume position</td>
+</tr>
+<tr>
+<td><strong>M3 – Learning tools</strong></td>
+<td>Notes, progress stats, course-complete state</td>
+</tr>
+<tr>
+<td><strong>M4 – Dashboard</strong></td>
+<td>Course cards, continue learning, remove/reset, empty state, &quot;fill space&quot; widgets</td>
+</tr>
+<tr>
+<td><strong>M5 – Polish</strong></td>
+<td>Responsive layout, dark mode, accessibility, error states, export/import</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2>12. Open Questions</h2>
+<ol>
+<li><strong>Display name:</strong> first-run prompt, or a settings field? (The sketch shows a personalized greeting but there is no auth.)</li>
+<li><strong>Completion %:</strong> by video count (simple, matches the <code>58/431 · 12%</code> sketch) or by watched duration?</li>
+<li><strong>Auto-complete:</strong> should videos auto-complete at end / 90%, or only be manual?</li>
+<li><strong>Notes format:</strong> plain text only, or Markdown with preview?</li>
+<li><strong>API key strategy:</strong> ship a restricted key in the client for v1, or add a small serverless proxy from day one?</li>
+<li><strong>Playlist refresh:</strong> manual only, or auto-check on course open?</li>
+<li><strong>Which dashboard &quot;fill space&quot; widgets</strong> (see §4.5) should ship in v1?</li>
+</ol>
+<hr>
+<h2>13. Future Enhancements (Post-v1)</h2>
+<p>Cloud sync and accounts · Chapters/sections grouping · Bookmarks and timestamped notes · Playback speed memory · Search across notes · Study streaks and goals · Course tags/folders · Shareable course links · Browser extension &quot;Add to Courseify&quot;.</p>
+
+</body></html>

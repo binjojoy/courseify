@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+
+<html lang="en"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><meta content="web_dashboard" name="shell-type"/><style>@import url('https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@layer base{html,body{margin:0;padding:0;font-family:'Google Sans',Arial,sans-serif;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{width:6px;height:6px;}::-webkit-scrollbar-track{background:transparent;}::-webkit-scrollbar-thumb{background:#1F2937;border-radius:4px;}::-webkit-scrollbar-thumb:hover{background:#374151;}</style><script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script><script id="tailwind-config">tailwind.config = { darkMode: "class", theme: { extend: { "colors": { "primary-fixed": "#dce1ff", "on-error": "#ffffff", "success": "#10B981", "on-surface-variant": "#94A3B8", "text-primary": "#F1F5F9", "border-default": "#1E293B", "primary-container": "#2563EB", "outline-variant": "#334155", "inverse-surface": "#0B0F17", "success-subtle": "#064E3B", "inverse-on-surface": "#F8FAFC", "secondary": "#10B981", "border-strong": "#334155", "on-background": "#F8FAFC", "on-primary-fixed-variant": "#1D4ED8", "accent": "#3B82F6", "accent-hover": "#2563EB", "accent-pressed": "#1D4ED8", "background": "#0B0F17", "surface-bright": "#1E293B", "on-error-container": "#FCA5A5", "outline": "#475569", "surface-variant": "#1E293B", "player-black": "#030712", "surface": "#0F172A", "on-secondary": "#ffffff", "primary": "#3B82F6", "warning": "#F59E0B", "secondary-container": "#065F46", "surface-container-low": "#0F172A", "error-subtle": "#7F1D1D", "inverse-primary": "#93C5FD", "bg-canvas": "#0B0F17", "error": "#EF4444", "on-tertiary": "#ffffff", "surface-container": "#111827", "surface-tint": "#3B82F6", "scrim": "rgba(3,7,18,0.75)", "surface-container-lowest": "#080C14", "surface-container-high": "#1E293B", "on-primary": "#ffffff", "on-accent": "#FFFFFF", "text-secondary": "#94A3B8", "bg-elevated": "#111827", "text-muted": "#64748B", "surface-container-highest": "#334155", "on-surface": "#F1F5F9", "surface-dim": "#0F172A", "bg-surface": "#0F172A", "bg-hover": "#1E293B" }, "borderRadius": { "DEFAULT": "0.375rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" }, "fontFamily": { "body": [ "'Google Sans'", "Arial", "sans-serif" ], "title": [ "'Google Sans'", "Arial", "sans-serif" ], "heading": [ "'Google Sans'", "Arial", "sans-serif" ], "mono": [ "'JetBrains Mono'", "monospace" ] } } } };</script><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/></head><body class="bg-[#0B0F17] font-body text-[#F1F5F9] min-h-screen selection:bg-blue-600/30 selection:text-blue-200"><header class="fixed top-0 left-0 right-0 z-50 h-14 bg-[#0F172A]/90 backdrop-blur-md border-b border-[#1E293B]"><div class="h-14 w-full px-4 sm:px-6 flex items-center justify-between"><div class="flex items-center gap-3 min-w-0 max-w-[calc(100%-140px)]"><a aria-label="Back to dashboard" class="w-9 h-9 flex items-center justify-center rounded-lg text-[#94A3B8] hover:bg-[#1E293B] hover:text-[#F1F5F9] transition-colors focus:outline-none" data-path="dashboard" href="#"><span class="material-symbols-outlined text-[20px]">arrow_back</span></a><div class="h-5 w-[1px] bg-[#1E293B] hidden sm:block"></div><div class="flex items-center gap-2.5 min-w-0"><img alt="Courseify Logo" class="h-6 w-auto object-contain hidden sm:block rounded" src="https://lh3.googleusercontent.com/aida/AEtjO1Ub_DHhG9WUAJMvSsP9XmY6ssDimOxWECcEdHiFSMFVgKxhQbI6mZQ1J8mScZDILL9c1xnMvb8Mo77SUASagWQhidDaeBYTH-cn57alazxgjC5gYi01giBHFM3slQRp4Ki-7irQV5Z5nJKcW92gGmQSC3HdsHb3d3kE89l0rdRkMm10dcwoyQVuGpe4iifr0B9B7Iw2hUGRg-Pmn3rWuzNc8FEi0sjQXXGQOTyxp3oFiWDc3MhJq3aBCwE"/><span class="text-sm font-semibold text-[#F1F5F9] truncate max-w-[240px] sm:max-w-[480px] tracking-tight">Operating Systems Fundamentals</span></div></div><div class="flex items-center gap-2 shrink-0"><button aria-label="Course options" class="w-9 h-9 flex items-center justify-center rounded-lg text-[#94A3B8] hover:bg-[#1E293B] hover:text-[#F1F5F9] transition-colors focus:outline-none" type="button"><span class="material-symbols-outlined text-[20px]">more_vert</span></button><button aria-label="Toggle theme" class="w-9 h-9 flex items-center justify-center rounded-lg text-[#94A3B8] hover:bg-[#1E293B] hover:text-[#F1F5F9] transition-colors focus:outline-none" type="button"><span class="material-symbols-outlined text-[20px]">dark_mode</span></button><button aria-label="User profile" class="w-8 h-8 rounded-full overflow-hidden focus:outline-none ring-2 ring-transparent hover:ring-[#3B82F6]/50 transition-all ml-1" type="button"><img alt="Profile" class="w-8 h-8 rounded-full object-cover" src="https://lh3.googleusercontent.com/aida/AEtjO1WsBQoTa7O4gO95JyxODn2n9jYB5-WSV7wz9M6sfp5ZUTlyfRWJG4nUhAidR2NLJGUnNHSMYCAsPs92kuraFs1_stzPhFKVObhljFnISPexPs94MrGRND8YVc3Jv17LZ7XVKUjFWGo66G9Po-ctRU8_wOhW7IC745mldW0ffZtTHYn1mav7QcfV6BGbsNEMmh396BG5FQQ_74JELbOJQo7uTU_r75YnzQpL6V-0DWQnJI7bBguR2ZleRRE"/></button></div></div></header><main class="w-full pt-14 bg-[#0B0F17] min-h-screen"><div class="flex flex-col w-full">
+<div class="flex flex-col lg:flex-row w-full h-[calc(100vh-56px)] overflow-hidden bg-[#0B0F17] text-[#F1F5F9]">
+<!-- Main Column: Fluid Stage up to 860px Content -->
+<div class="flex-1 flex flex-col h-full overflow-y-auto overflow-x-hidden [scrollbar-width:thin] [scrollbar-color:#1E293B_transparent]">
+<!-- Video Player Viewport -->
+<section class="relative w-full aspect-video bg-[#030712] select-none shrink-0 overflow-hidden group shadow-2xl border-b border-[#1E293B]">
+<!-- Realistic CS Lecture Slide Frame & Stream -->
+<div class="absolute inset-0 flex flex-col justify-between font-body bg-gradient-to-br from-[#0D1526] via-[#0A101D] to-[#070B14]">
+<!-- Top Slide Banner Header -->
+<div class="flex items-center justify-between px-6 sm:px-8 py-3.5 bg-[#0F172A]/90 border-b border-[#1E293B]/80 backdrop-blur-sm">
+<div class="flex items-center gap-3">
+<div class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-blue-500/10 border border-blue-500/25">
+<span class="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+<span class="text-[11px] font-semibold tracking-wide text-blue-400 font-mono">CS 301</span>
+</div>
+<span class="text-xs font-medium text-[#94A3B8]">Systems Programming &amp; Architecture</span>
+<span class="text-[#475569] text-xs hidden sm:inline">•</span>
+<span class="text-xs text-[#CBD5E1] hidden sm:inline font-medium">Lecture 12: Virtual Memory &amp; Address Translation</span>
+</div>
+<div class="flex items-center gap-3 text-xs text-[#64748B]">
+<span class="font-mono text-[11px] bg-[#1E293B] px-2 py-0.5 rounded text-[#94A3B8] hidden md:inline">Fall 2024</span>
+<div class="flex items-center gap-1 text-[#94A3B8]">
+<span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+<span class="font-mono text-[11px]">REC 1080p60</span>
+</div>
+</div>
+</div>
+<!-- Slide Canvas Interior -->
+<div class="flex-1 w-full px-6 sm:px-10 py-5 flex flex-col justify-between relative overflow-hidden">
+<!-- Slide Headline -->
+<div class="flex items-start justify-between">
+<div>
+<div class="text-[11px] font-mono uppercase tracking-wider text-blue-400 font-medium">Section 3.4 • Hardware Support &amp; Paging</div>
+<h2 class="text-lg sm:text-xl font-bold text-white tracking-tight mt-0.5">Two-Level Page Table Lookup &amp; TLB Fast-Path</h2>
+</div>
+<div class="text-right hidden sm:block">
+<div class="text-xs font-semibold text-[#CBD5E1]">Northfield University</div>
+<div class="text-[11px] text-[#64748B] font-mono">Dept. of Computer Science</div>
+</div>
+</div>
+<!-- Diagram & Code Walkthrough Split Content -->
+<div class="grid grid-cols-12 gap-4 my-auto items-stretch">
+<!-- Left: Address Structure & Architectural Flow -->
+<div class="col-span-12 sm:col-span-7 flex flex-col justify-center space-y-3 bg-[#0F172A]/70 p-3.5 sm:p-4 rounded-xl border border-[#1E293B]">
+<div class="flex items-center justify-between text-xs">
+<span class="font-mono font-medium text-[#94A3B8]">32-bit Linear Virtual Address</span>
+<span class="font-mono text-[10px] text-blue-400 bg-blue-950/60 px-1.5 py-0.5 rounded border border-blue-800/40">4 KB Page granularity</span>
+</div>
+<!-- 32-bit split bar -->
+<div class="grid grid-cols-10 gap-1 font-mono text-[11px] text-center">
+<div class="col-span-3 bg-blue-900/40 border border-blue-500/40 py-1.5 rounded text-blue-200">
+<div class="font-semibold">Directory</div>
+<div class="text-[9px] text-blue-300/70">Bits 31–22 (10b)</div>
+</div>
+<div class="col-span-3 bg-indigo-900/40 border border-indigo-500/40 py-1.5 rounded text-indigo-200">
+<div class="font-semibold">Table Index</div>
+<div class="text-[9px] text-indigo-300/70">Bits 21–12 (10b)</div>
+</div>
+<div class="col-span-4 bg-slate-800/80 border border-slate-700 py-1.5 rounded text-slate-300">
+<div class="font-semibold">Offset (d)</div>
+<div class="text-[9px] text-slate-400">Bits 11–0 (12b)</div>
+</div>
+</div>
+<!-- Step comparison diagram -->
+<div class="grid grid-cols-3 gap-2 pt-1">
+<div class="bg-[#111827] p-2.5 rounded-lg border border-[#1E293B]">
+<div class="text-[10px] uppercase font-mono text-emerald-400 font-semibold flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Fast Path
+</div>
+<div class="text-xs font-semibold text-white mt-1">TLB Hit (99%)</div>
+<div class="text-[11px] text-[#94A3B8] font-mono mt-0.5">~1 cycle delay</div>
+</div>
+<div class="bg-[#111827] p-2.5 rounded-lg border border-[#1E293B]">
+<div class="text-[10px] uppercase font-mono text-amber-400 font-semibold flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span> TLB Miss
+</div>
+<div class="text-xs font-semibold text-white mt-1">Hardware Walk</div>
+<div class="text-[11px] text-[#94A3B8] font-mono mt-0.5">Read CR3 -&gt; Memory</div>
+</div>
+<div class="bg-[#111827] p-2.5 rounded-lg border border-[#1E293B]">
+<div class="text-[10px] uppercase font-mono text-rose-400 font-semibold flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span> Exception
+</div>
+<div class="text-xs font-semibold text-white mt-1">#PF Interrupt</div>
+<div class="text-[11px] text-[#94A3B8] font-mono mt-0.5">Kernel traps to OS</div>
+</div>
+</div>
+</div>
+<!-- Right: Real C Implementation snippet / PTE struct -->
+<div class="col-span-12 sm:col-span-5 bg-[#030712]/90 rounded-xl border border-[#1E293B] p-3 sm:p-3.5 flex flex-col justify-between font-mono">
+<div class="flex items-center justify-between border-b border-[#1E293B] pb-2 mb-2">
+<span class="text-[11px] text-[#94A3B8] flex items-center gap-1.5">
+<span class="material-symbols-outlined text-[14px] text-blue-400">code</span>
+arch/x86/mm/fault.c
+</span>
+<span class="text-[10px] text-emerald-400 font-medium">Valid C99</span>
+</div>
+<pre class="text-[11px] leading-[18px] text-[#E2E8F0] overflow-x-hidden"><code><span class="text-[#64748B]">// Page table entry definition</span>
+<span class="text-blue-400">typedef struct</span> {
+  <span class="text-indigo-400">uint32_t</span> present  : 1,
+           rw       : 1,
+           user     : 1,
+           accessed : 1,
+           dirty    : 1,
+           frame    : 20;
+} <span class="text-amber-300">pte_t</span>;
+
+<span class="text-blue-400">void</span> *<span class="text-emerald-300">translate_addr</span>(<span class="text-indigo-400">uint32_t</span> vaddr) {
+  <span class="text-blue-400">if</span> (tlb_lookup(vaddr, &amp;paddr))
+    <span class="text-blue-400">return</span> paddr; <span class="text-[#64748B]">/* &lt;-- HIT */</span>
+  <span class="text-blue-400">return</span> mmu_page_walk(vaddr);
+}</code></pre>
+</div>
+</div>
+<!-- Slide Bottom Academic Note & Instructor PIP -->
+<div class="flex items-center justify-between pt-2 border-t border-[#1E293B]/70 text-[11px] text-[#64748B]">
+<span class="font-mono">Slide 24 of 42 • Section: Memory Subsystems</span>
+<span class="hidden sm:inline">Textbook ref: Silberschatz, Galvin &amp; Gagne, 10th Ed. §9.2</span>
+</div>
+</div>
+<!-- Realistic Instructor Camera PIP Overlay -->
+<div class="absolute bottom-16 right-4 sm:right-6 w-28 sm:w-36 aspect-video rounded-lg overflow-hidden border border-[#334155] shadow-2xl bg-[#0F172A] z-10 hidden sm:block group-hover:opacity-90 transition-opacity">
+<div class="relative w-full h-full">
+<img alt="Instructor Dr. Vance lecturing" class="w-full h-full object-cover object-top filter contrast-[1.05]" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD18fknZvHcJ5xdkX8vb9ROfqOKp6OAj2oCj5S4Hxs4enMbwvzmWVC3kkhoBTc7-WJ3aLQ0Y4K8l5mSHPZe1GkGgI5T1hf_kwHuVnKUOi1NmGHRu7IM3Tsr00udN73sLPjkYbFy1DFAou3EEZWCAJEL3C_cyCHsQWycqnGmRW31EeMsOvJxnOJueVSkbXqvEO37SoIw2LMnXJKdX3l5JQ81Y1KwyhXPzrupuvRDWDG69caA2dZpTksD"/>
+<div class="absolute bottom-1 left-1.5 right-1.5 flex items-center justify-between text-[9px] bg-black/70 px-1 py-0.5 rounded text-white backdrop-blur-[2px] font-mono">
+<span class="truncate">Prof. Vance</span>
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+</div>
+</div>
+</div>
+</div>
+<!-- Modern Polished Player Control Bar (YouTube/Vimeo style) -->
+<div class="absolute bottom-0 left-0 right-0 pt-10 pb-2.5 px-4 bg-gradient-to-t from-black/95 via-black/70 to-transparent flex flex-col gap-2 z-20 transition-all duration-200">
+<!-- Modern Scrubber Timeline Bar -->
+<div class="relative w-full h-1 group/timeline flex items-center cursor-pointer transition-all duration-150 py-2">
+<div class="w-full h-1 group-hover/timeline:h-2 bg-white/20 rounded-full overflow-visible relative transition-all duration-150">
+<!-- Buffer track -->
+<div class="absolute top-0 bottom-0 left-0 w-[78%] bg-white/30 rounded-full pointer-events-none"></div>
+<!-- Progress track (08:45 / 14:32 = ~60.2%) -->
+<div class="absolute top-0 bottom-0 left-0 w-[60.2%] bg-[#3B82F6] rounded-full pointer-events-none flex items-center justify-end">
+<div class="w-3.5 h-3.5 rounded-full bg-white shadow-lg ring-2 ring-blue-500 scale-0 group-hover/timeline:scale-100 transition-transform -mr-1.5"></div>
+</div>
+</div>
+</div>
+<!-- Player Action Controls -->
+<div class="flex items-center justify-between text-white/95 text-xs">
+<div class="flex items-center gap-1 sm:gap-2">
+<!-- Play / Pause -->
+<button aria-label="Pause" class="w-8 h-8 flex items-center justify-center rounded hover:bg-white/10 text-white transition-colors focus:outline-none" type="button">
+<span class="material-symbols-outlined text-[22px]">pause</span>
+</button>
+<!-- Rewind 10 -->
+<button aria-label="Replay 10 seconds" class="w-8 h-8 hidden sm:flex items-center justify-center rounded hover:bg-white/10 text-[#CBD5E1] hover:text-white transition-colors focus:outline-none" type="button">
+<span class="material-symbols-outlined text-[20px]">replay_10</span>
+</button>
+<!-- Next Track -->
+<button aria-label="Next track" class="w-8 h-8 hidden sm:flex items-center justify-center rounded hover:bg-white/10 text-[#CBD5E1] hover:text-white transition-colors focus:outline-none" type="button">
+<span class="material-symbols-outlined text-[20px]">skip_next</span>
+</button>
+<!-- Volume Cluster -->
+<div class="flex items-center gap-1.5 group/vol ml-1">
+<button aria-label="Mute toggle" class="w-8 h-8 flex items-center justify-center rounded hover:bg-white/10 text-white transition-colors focus:outline-none" type="button">
+<span class="material-symbols-outlined text-[20px]">volume_up</span>
+</button>
+<div class="w-16 h-1 bg-white/20 rounded-full overflow-hidden hidden sm:block cursor-pointer">
+<div class="h-full bg-white w-4/5 rounded-full"></div>
+</div>
+</div>
+<!-- Current Time / Duration -->
+<div class="font-mono text-xs text-[#94A3B8] ml-2 select-none">
+<span class="text-white font-medium">08:45</span> / <span>14:32</span>
+</div>
+</div>
+<div class="flex items-center gap-1">
+<button class="px-2 py-1 rounded text-[11px] font-mono font-semibold text-[#CBD5E1] hover:text-white hover:bg-white/10 transition-colors focus:outline-none" type="button">1.0x</button>
+<button aria-label="Closed captions" class="w-8 h-8 flex items-center justify-center rounded hover:bg-white/10 text-[#CBD5E1] hover:text-white transition-colors focus:outline-none" type="button">
+<span class="material-symbols-outlined text-[20px]">closed_caption</span>
+</button>
+<button aria-label="Playback settings" class="w-8 h-8 flex items-center justify-center rounded hover:bg-white/10 text-[#CBD5E1] hover:text-white transition-colors focus:outline-none" type="button">
+<span class="material-symbols-outlined text-[20px]">settings</span>
+</button>
+<button aria-label="Mini player" class="w-8 h-8 hidden sm:flex items-center justify-center rounded hover:bg-white/10 text-[#CBD5E1] hover:text-white transition-colors focus:outline-none" type="button">
+<span class="material-symbols-outlined text-[20px]">picture_in_picture_alt</span>
+</button>
+<button aria-label="Fullscreen" class="w-8 h-8 flex items-center justify-center rounded hover:bg-white/10 text-[#CBD5E1] hover:text-white transition-colors focus:outline-none" type="button">
+<span class="material-symbols-outlined text-[20px]">fullscreen</span>
+</button>
+</div>
+</div>
+</div>
+</section>
+<!-- Content Stage: Max 824px centered with clean dark theme -->
+<div class="w-full max-w-[824px] mx-auto px-6 sm:px-8 pt-6 pb-16 flex flex-col">
+<!-- Video Title & Primary Header Row -->
+<div class="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pb-6">
+<div class="min-w-0 flex-1">
+<h1 class="text-xl sm:text-2xl font-bold text-[#F1F5F9] tracking-tight">Virtual memory: page tables and the TLB</h1>
+<div class="flex items-center gap-3 mt-1.5 text-xs text-[#94A3B8]">
+<span class="font-medium text-[#CBD5E1]">Video 12 of 31</span>
+<span class="inline-block w-1 h-1 rounded-full bg-[#334155]"></span>
+<span class="flex items-center gap-1 font-mono">
+<span class="material-symbols-outlined text-[14px]">schedule</span>
+14:32
+</span>
+</div>
+</div>
+<!-- Previous/Next and Mark Complete Buttons -->
+<div class="flex items-center gap-2 self-start shrink-0">
+<div class="flex items-center rounded-lg bg-[#111827] border border-[#1E293B] p-0.5 shadow-sm">
+<button aria-label="Previous video" class="w-9 h-9 flex items-center justify-center rounded text-[#94A3B8] hover:text-white hover:bg-[#1E293B] transition-colors focus:outline-none" type="button">
+<span class="material-symbols-outlined text-[20px]">chevron_left</span>
+</button>
+<div class="h-4 w-[1px] bg-[#1E293B]"></div>
+<button aria-label="Next video" class="w-9 h-9 flex items-center justify-center rounded text-[#94A3B8] hover:text-white hover:bg-[#1E293B] transition-colors focus:outline-none" type="button">
+<span class="material-symbols-outlined text-[20px]">chevron_right</span>
+</button>
+</div>
+<button class="h-10 px-4 flex items-center gap-2 rounded-lg bg-[#111827] border border-[#334155] text-[#F1F5F9] hover:bg-[#1E293B] hover:border-[#64748B] transition-colors focus:outline-none text-sm font-medium cursor-pointer shadow-sm" id="markCompleteBtn" type="button">
+<span class="material-symbols-outlined text-[18px] text-emerald-400">check</span>
+<span>Mark complete</span>
+</button>
+</div>
+</div>
+<!-- Description Block -->
+<div class="pt-6 border-t border-[#1E293B] flex flex-col">
+<div class="text-sm text-[#94A3B8] line-clamp-3 leading-relaxed transition-all" id="descContent">
+An introduction to virtual memory architectures, hierarchical page tables, translation lookaside buffers (TLBs), and page fault handling mechanisms. Source slides available at <a class="text-blue-400 hover:text-blue-300 underline font-medium focus:outline-none" href="#">https://cs.northfield.edu/os-notes</a>. Key breakdown at 12:34 covering hardware page walking.
+</div>
+<div class="mt-2.5">
+<button class="text-blue-400 hover:text-blue-300 text-xs font-semibold focus:outline-none transition-colors" id="descToggle" type="button">
+Show more
+</button>
+</div>
+</div>
+<!-- Notes Workspace Block -->
+<div class="pt-6 mt-6 border-t border-[#1E293B] flex flex-col gap-3">
+<div class="flex items-center justify-between">
+<h2 class="text-base font-semibold text-[#F1F5F9]">Notes</h2>
+<div class="flex items-center gap-1.5 text-xs text-[#94A3B8]">
+<span class="material-symbols-outlined text-[15px] text-emerald-400">check_circle</span>
+<span class="tracking-wide">Saved</span>
+</div>
+</div>
+<div class="w-full flex flex-col rounded-xl border border-[#1E293B] bg-[#111827] focus-within:border-blue-500/80 focus-within:ring-1 focus-within:ring-blue-500/30 transition-all overflow-hidden shadow-sm">
+<textarea class="w-full p-4 bg-transparent text-[#F1F5F9] text-sm resize-y outline-none leading-relaxed placeholder-[#64748B]" id="notesArea" placeholder="Type your personal observations, memory pointers, or questions..." rows="4">Page table = one entry per virtual page. TLB caches recent translations, so misses are expensive. Revisit at 12:34.</textarea>
+<!-- Notes Toolbar -->
+<div class="flex items-center justify-between px-3.5 py-2.5 border-t border-[#1E293B] bg-[#0F172A]/80">
+<button class="h-8 px-3 flex items-center gap-1.5 rounded-lg text-[#CBD5E1] hover:text-white hover:bg-[#1E293B] transition-colors focus:outline-none text-xs font-medium" id="insertTimestampBtn" type="button">
+<span class="material-symbols-outlined text-[16px] text-blue-400">schedule</span>
+<span>Insert 08:45</span>
+</button>
+<span class="text-xs text-[#64748B] hidden sm:inline font-mono">Markdown enabled</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Anchored Playlist Sidebar: Fixed 403px on desktop, crisp dark slate background -->
+<aside class="w-full lg:w-[403px] lg:shrink-0 flex flex-col h-full bg-[#0F172A] border-t lg:border-t-0 lg:border-l border-[#1E293B] select-none">
+<!-- Fixed Progress Header Card -->
+<div class="p-4 border-b border-[#1E293B] flex flex-col gap-3.5 bg-[#0F172A] shrink-0">
+<div class="flex items-center justify-between">
+<span class="text-sm font-semibold text-[#CBD5E1]">Progress</span>
+<div class="flex items-center gap-2">
+<span class="text-sm font-bold text-[#F1F5F9]">12 / 31</span>
+<span class="text-xs text-[#94A3B8] font-mono">(39%)</span>
+</div>
+</div>
+<div class="flex items-center justify-between text-xs">
+<span class="text-[#94A3B8]">Watch time</span>
+<span class="text-[#CBD5E1] font-mono">2h 05m / 5h 10m</span>
+</div>
+<!-- Progress Bar -->
+<div class="w-full h-1.5 bg-[#1E293B] rounded-full overflow-hidden">
+<div class="h-full bg-blue-500 rounded-full transition-all duration-300" style="width: 39%"></div>
+</div>
+<!-- Playlist Utility Controls -->
+<div class="flex items-center justify-between pt-1">
+<label class="flex items-center gap-2.5 cursor-pointer">
+<div class="relative inline-flex items-center">
+<input checked="" class="sr-only peer" id="autoplayToggle" type="checkbox"/>
+<div class="w-8 h-4 bg-[#1E293B] border border-[#334155] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-4 peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-blue-600 peer-checked:border-blue-600"></div>
+</div>
+<span class="text-xs font-medium text-[#CBD5E1]">Autoplay next</span>
+</label>
+<button class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[#94A3B8] hover:text-[#F1F5F9] hover:bg-[#1E293B] transition-colors focus:outline-none text-xs font-medium" id="hideCompletedBtn" title="Hide completed items" type="button">
+<span class="material-symbols-outlined text-[16px]">visibility_off</span>
+<span>Hide completed</span>
+</button>
+</div>
+</div>
+<!-- Scrollable Playlist Items -->
+<div class="flex-1 overflow-y-auto px-2 py-2 flex flex-col gap-1 [scrollbar-width:thin] [scrollbar-color:#1E293B_transparent]" id="playlistContainer">
+<!-- Item 8: Completed -->
+<div class="h-14 px-3 rounded-lg flex items-center justify-between hover:bg-[#1E293B]/70 transition-colors cursor-pointer group playlist-item completed-item" data-id="8">
+<div class="flex items-center gap-3 min-w-0">
+<span class="font-mono text-xs text-[#64748B] w-5 text-right shrink-0">8</span>
+<span class="text-sm text-[#94A3B8] truncate group-hover:text-[#CBD5E1] transition-colors">Processes and the process table</span>
+</div>
+<div class="flex items-center gap-3 shrink-0 ml-2">
+<span class="font-mono text-xs text-[#64748B]">11:20</span>
+<div class="w-4 h-4 rounded bg-emerald-600/90 text-white flex items-center justify-center">
+<span class="material-symbols-outlined text-[13px] font-bold">check</span>
+</div>
+</div>
+</div>
+<!-- Item 9: Completed with Note Attachment -->
+<div class="h-14 px-3 rounded-lg flex items-center justify-between hover:bg-[#1E293B]/70 transition-colors cursor-pointer group playlist-item completed-item" data-id="9">
+<div class="flex items-center gap-3 min-w-0">
+<span class="font-mono text-xs text-[#64748B] w-5 text-right shrink-0">9</span>
+<div class="flex items-center gap-2 min-w-0">
+<span class="text-sm text-[#94A3B8] truncate group-hover:text-[#CBD5E1] transition-colors">Context switching in practice</span>
+<span class="material-symbols-outlined text-[14px] text-blue-400 shrink-0" title="Contains personal note">sticky_note_2</span>
+</div>
+</div>
+<div class="flex items-center gap-3 shrink-0 ml-2">
+<span class="font-mono text-xs text-[#64748B]">9:48</span>
+<div class="w-4 h-4 rounded bg-emerald-600/90 text-white flex items-center justify-center">
+<span class="material-symbols-outlined text-[13px] font-bold">check</span>
+</div>
+</div>
+</div>
+<!-- Item 10: Completed -->
+<div class="h-14 px-3 rounded-lg flex items-center justify-between hover:bg-[#1E293B]/70 transition-colors cursor-pointer group playlist-item completed-item" data-id="10">
+<div class="flex items-center gap-3 min-w-0">
+<span class="font-mono text-xs text-[#64748B] w-5 text-right shrink-0">10</span>
+<span class="text-sm text-[#94A3B8] truncate group-hover:text-[#CBD5E1] transition-colors">CPU scheduling: FIFO, SJF, round robin</span>
+</div>
+<div class="flex items-center gap-3 shrink-0 ml-2">
+<span class="font-mono text-xs text-[#64748B]">18:05</span>
+<div class="w-4 h-4 rounded bg-emerald-600/90 text-white flex items-center justify-center">
+<span class="material-symbols-outlined text-[13px] font-bold">check</span>
+</div>
+</div>
+</div>
+<!-- Item 11: Completed -->
+<div class="h-14 px-3 rounded-lg flex items-center justify-between hover:bg-[#1E293B]/70 transition-colors cursor-pointer group playlist-item completed-item" data-id="11">
+<div class="flex items-center gap-3 min-w-0">
+<span class="font-mono text-xs text-[#64748B] w-5 text-right shrink-0">11</span>
+<span class="text-sm text-[#94A3B8] truncate group-hover:text-[#CBD5E1] transition-colors">Multi-level feedback queues</span>
+</div>
+<div class="flex items-center gap-3 shrink-0 ml-2">
+<span class="font-mono text-xs text-[#64748B]">12:41</span>
+<div class="w-4 h-4 rounded bg-emerald-600/90 text-white flex items-center justify-center">
+<span class="material-symbols-outlined text-[13px] font-bold">check</span>
+</div>
+</div>
+</div>
+<!-- Item 12: CURRENT PLAYING VIDEO -->
+<div class="h-14 px-3 rounded-lg flex items-center justify-between bg-[#1E293B]/90 relative cursor-pointer playlist-item border-l-4 border-blue-500 shadow-md" data-id="12">
+<div class="flex items-center gap-3 min-w-0 pl-0.5">
+<!-- Audio Waveform Indicator -->
+<div class="w-4 flex items-end justify-center gap-0.5 h-3.5 shrink-0" title="Currently Playing">
+<span class="w-[2.5px] h-3.5 bg-blue-400 rounded-full animate-pulse"></span>
+<span class="w-[2.5px] h-2 bg-blue-400 rounded-full animate-pulse" style="animation-delay: 150ms"></span>
+<span class="w-[2.5px] h-3 bg-blue-400 rounded-full animate-pulse" style="animation-delay: 300ms"></span>
+</div>
+<span class="text-sm font-semibold text-white truncate">Virtual memory: page tables and the TLB</span>
+</div>
+<div class="flex items-center gap-3 shrink-0 ml-2">
+<span class="font-mono text-xs text-blue-300 font-medium">14:32</span>
+<div class="w-4 h-4 rounded border-2 border-[#64748B] bg-transparent hover:border-white transition-colors" title="Mark as complete"></div>
+</div>
+</div>
+<!-- Item 13: Uncompleted -->
+<div class="h-14 px-3 rounded-lg flex items-center justify-between hover:bg-[#1E293B]/70 transition-colors cursor-pointer group playlist-item" data-id="13">
+<div class="flex items-center gap-3 min-w-0">
+<span class="font-mono text-xs text-[#64748B] w-5 text-right shrink-0">13</span>
+<span class="text-sm text-[#CBD5E1] truncate group-hover:text-white transition-colors">Segmentation and paging compared</span>
+</div>
+<div class="flex items-center gap-3 shrink-0 ml-2">
+<span class="font-mono text-xs text-[#64748B]">16:27</span>
+<div class="w-4 h-4 rounded border border-[#334155] bg-transparent group-hover:border-[#64748B] transition-colors"></div>
+</div>
+</div>
+<!-- Item 14: Uncompleted -->
+<div class="h-14 px-3 rounded-lg flex items-center justify-between hover:bg-[#1E293B]/70 transition-colors cursor-pointer group playlist-item" data-id="14">
+<div class="flex items-center gap-3 min-w-0">
+<span class="font-mono text-xs text-[#64748B] w-5 text-right shrink-0">14</span>
+<span class="text-sm text-[#CBD5E1] truncate group-hover:text-white transition-colors">Page replacement algorithms</span>
+</div>
+<div class="flex items-center gap-3 shrink-0 ml-2">
+<span class="font-mono text-xs text-[#64748B]">13:59</span>
+<div class="w-4 h-4 rounded border border-[#334155] bg-transparent group-hover:border-[#64748B] transition-colors"></div>
+</div>
+</div>
+<!-- Item 15: Uncompleted -->
+<div class="h-14 px-3 rounded-lg flex items-center justify-between hover:bg-[#1E293B]/70 transition-colors cursor-pointer group playlist-item" data-id="15">
+<div class="flex items-center gap-3 min-w-0">
+<span class="font-mono text-xs text-[#64748B] w-5 text-right shrink-0">15</span>
+<span class="text-sm text-[#CBD5E1] truncate group-hover:text-white transition-colors">Thrashing and working sets</span>
+</div>
+<div class="flex items-center gap-3 shrink-0 ml-2">
+<span class="font-mono text-xs text-[#64748B]">8:33</span>
+<div class="w-4 h-4 rounded border border-[#334155] bg-transparent group-hover:border-[#64748B] transition-colors"></div>
+</div>
+</div>
+<!-- Item 16: Uncompleted -->
+<div class="h-14 px-3 rounded-lg flex items-center justify-between hover:bg-[#1E293B]/70 transition-colors cursor-pointer group playlist-item" data-id="16">
+<div class="flex items-center gap-3 min-w-0">
+<span class="font-mono text-xs text-[#64748B] w-5 text-right shrink-0">16</span>
+<span class="text-sm text-[#CBD5E1] truncate group-hover:text-white transition-colors">Concurrency: threads vs processes</span>
+</div>
+<div class="flex items-center gap-3 shrink-0 ml-2">
+<span class="font-mono text-xs text-[#64748B]">15:02</span>
+<div class="w-4 h-4 rounded border border-[#334155] bg-transparent group-hover:border-[#64748B] transition-colors"></div>
+</div>
+</div>
+<!-- Item 17: Uncompleted -->
+<div class="h-14 px-3 rounded-lg flex items-center justify-between hover:bg-[#1E293B]/70 transition-colors cursor-pointer group playlist-item" data-id="17">
+<div class="flex items-center gap-3 min-w-0">
+<span class="font-mono text-xs text-[#64748B] w-5 text-right shrink-0">17</span>
+<span class="text-sm text-[#CBD5E1] truncate group-hover:text-white transition-colors">Locks and mutual exclusion</span>
+</div>
+<div class="flex items-center gap-3 shrink-0 ml-2">
+<span class="font-mono text-xs text-[#64748B]">17:44</span>
+<div class="w-4 h-4 rounded border border-[#334155] bg-transparent group-hover:border-[#64748B] transition-colors"></div>
+</div>
+</div>
+</div>
+</aside>
+</div>
+<script>
+    // Toggle Description Expansion
+    const descContent = document.getElementById('descContent');
+    const descToggle = document.getElementById('descToggle');
+    let isExpanded = false;
+
+    if (descToggle && descContent) {
+      descToggle.addEventListener('click', () => {
+        isExpanded = !isExpanded;
+        if (isExpanded) {
+          descContent.classList.remove('line-clamp-3');
+          descToggle.textContent = 'Show less';
+        } else {
+          descContent.classList.add('line-clamp-3');
+          descToggle.textContent = 'Show more';
+        }
+      });
+    }
+
+    // Insert Timestamp into notes textarea
+    const insertBtn = document.getElementById('insertTimestampBtn');
+    const notesArea = document.getElementById('notesArea');
+
+    if (insertBtn && notesArea) {
+      insertBtn.addEventListener('click', () => {
+        const textToInsert = ' [08:45] ';
+        const start = notesArea.selectionStart;
+        const end = notesArea.selectionEnd;
+        const text = notesArea.value;
+        notesArea.value = text.substring(0, start) + textToInsert + text.substring(end);
+        notesArea.focus();
+        notesArea.selectionStart = notesArea.selectionEnd = start + textToInsert.length;
+      });
+    }
+
+    // Toggle Hide Completed Rows
+    const hideCompletedBtn = document.getElementById('hideCompletedBtn');
+    let completedHidden = false;
+
+    if (hideCompletedBtn) {
+      hideCompletedBtn.addEventListener('click', () => {
+        completedHidden = !completedHidden;
+        const completedRows = document.querySelectorAll('.completed-item');
+        completedRows.forEach(row => {
+          row.style.display = completedHidden ? 'none' : 'flex';
+        });
+        hideCompletedBtn.classList.toggle('text-blue-400', completedHidden);
+        hideCompletedBtn.querySelector('span:last-child').textContent = completedHidden ? 'Show completed' : 'Hide completed';
+      });
+    }
+
+    // Mark Complete Button Interaction
+    const markCompleteBtn = document.getElementById('markCompleteBtn');
+    let isMarked = false;
+
+    if (markCompleteBtn) {
+      markCompleteBtn.addEventListener('click', () => {
+        isMarked = !isMarked;
+        if (isMarked) {
+          markCompleteBtn.classList.remove('bg-[#111827]', 'border-[#334155]');
+          markCompleteBtn.classList.add('bg-emerald-950/40', 'border-emerald-500/50', 'text-emerald-400');
+          markCompleteBtn.querySelector('span:last-child').textContent = 'Completed';
+        } else {
+          markCompleteBtn.classList.add('bg-[#111827]', 'border-[#334155]');
+          markCompleteBtn.classList.remove('bg-emerald-950/40', 'border-emerald-500/50', 'text-emerald-400');
+          markCompleteBtn.querySelector('span:last-child').textContent = 'Mark complete';
+        }
+      });
+    }
+  </script>
+</div></main></body></html>
