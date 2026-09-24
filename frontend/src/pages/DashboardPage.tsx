@@ -146,68 +146,98 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           <div className="flex items-center gap-2.5">
             <button
               type="button"
-              onClick={() => setIsQuickAddOpen(!isQuickAddOpen)}
+              onClick={() => {
+                setAddError(null);
+                setQuickUrl('');
+                setIsQuickAddOpen(true);
+              }}
               className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl bg-accent text-white font-medium text-sm hover:bg-accent-hover active:bg-accent-pressed transition-colors shadow-sm focus:outline-none"
             >
-              <span className="material-symbols-outlined text-[18px]">
-                {isQuickAddOpen ? 'close' : 'add'}
-              </span>
-              <span>{isQuickAddOpen ? 'Close' : 'Add course'}</span>
+              <span className="material-symbols-outlined text-[18px]">add</span>
+              <span>Add course</span>
             </button>
           </div>
         </header>
 
-        {/* Quick Add Course Panel (Expandable directly in dashboard without full redirection) */}
+        {/* Add Course Modal (Centered with Backdrop Blur) */}
         {isQuickAddOpen && (
-          <section className="mb-8 p-5 sm:p-6 rounded-2xl bg-bg-surface border border-accent/30 shadow-lg shadow-accent/5 animate-fadeIn">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-accent text-[20px]">add_link</span>
-                <h3 className="font-semibold text-text-primary text-base">Add New Course</h3>
-              </div>
-              <span className="text-xs text-text-muted">Instant conversion</span>
-            </div>
-
-            <form onSubmit={handleQuickAddSubmit} className="flex flex-col gap-3">
-              <div className="flex flex-col sm:flex-row items-center gap-2.5">
-                <input
-                  type="url"
-                  value={quickUrl}
-                  onChange={(e) => {
-                    setQuickUrl(e.target.value);
-                    if (addError) setAddError(null);
-                  }}
-                  disabled={isAdding}
-                  placeholder="Paste YouTube playlist or video link (e.g. https://www.youtube.com/playlist?list=...)"
-                  className="w-full h-11 px-3.5 bg-bg-canvas border border-border-default rounded-xl text-sm text-text-primary focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
-                />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fadeIn">
+            <div className="w-full max-w-lg bg-bg-surface dark:bg-[#0F172A] rounded-2xl border border-border-default dark:border-slate-800 p-6 sm:p-7 shadow-2xl animate-scaleUp">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-accent-subtle dark:bg-blue-950/60 text-accent flex items-center justify-center">
+                    <span className="material-symbols-outlined text-[20px]">add_link</span>
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-text-primary text-base">Add New Course</h3>
+                    <p className="text-xs text-text-muted mt-0.5">Turn any YouTube playlist or video into a course</p>
+                  </div>
+                </div>
                 <button
-                  type="submit"
-                  disabled={isAdding || !quickUrl.trim()}
-                  className="w-full sm:w-auto h-11 px-5 rounded-xl bg-accent text-white font-medium text-sm hover:bg-accent-hover active:bg-accent-pressed disabled:opacity-50 disabled:pointer-events-none transition-all shrink-0 flex items-center justify-center gap-2 shadow-sm"
+                  type="button"
+                  onClick={() => setIsQuickAddOpen(false)}
+                  className="text-text-muted hover:text-text-primary p-1.5 rounded-lg hover:bg-bg-hover transition-colors"
                 >
-                  {isAdding ? (
-                    <>
-                      <span className="material-symbols-outlined text-[18px] animate-spin">progress_activity</span>
-                      <span>Adding...</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>Import Course</span>
-                      <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
-                    </>
-                  )}
+                  <span className="material-symbols-outlined text-[20px]">close</span>
                 </button>
               </div>
 
-              {addError && (
-                <div className="text-error text-xs flex items-center gap-1.5 font-medium animate-fadeIn">
-                  <span className="material-symbols-outlined text-[16px]">error</span>
-                  <span>{addError}</span>
+              <form onSubmit={handleQuickAddSubmit} className="flex flex-col gap-4 mt-2">
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="quick-course-url" className="text-xs font-semibold text-text-secondary">
+                    YouTube URL
+                  </label>
+                  <input
+                    id="quick-course-url"
+                    type="url"
+                    value={quickUrl}
+                    onChange={(e) => {
+                      setQuickUrl(e.target.value);
+                      if (addError) setAddError(null);
+                    }}
+                    disabled={isAdding}
+                    autoFocus
+                    placeholder="https://www.youtube.com/playlist?list=... or video link"
+                    className="w-full h-11 px-3.5 bg-bg-canvas border border-border-default dark:border-slate-800 rounded-xl text-sm text-text-primary focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all placeholder:text-text-muted font-medium"
+                  />
                 </div>
-              )}
-            </form>
-          </section>
+
+                {addError && (
+                  <div className="text-error text-xs flex items-center gap-1.5 font-medium animate-fadeIn bg-error/10 p-2.5 rounded-lg border border-error/20">
+                    <span className="material-symbols-outlined text-[16px] shrink-0">error</span>
+                    <span>{addError}</span>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end gap-2.5 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsQuickAddOpen(false)}
+                    className="h-10 px-4 rounded-xl border border-border-default dark:border-slate-800 text-text-primary text-xs font-semibold hover:bg-bg-hover transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isAdding || !quickUrl.trim()}
+                    className="h-10 px-5 rounded-xl bg-accent text-white font-medium text-xs hover:bg-accent-hover active:bg-accent-pressed disabled:opacity-50 disabled:pointer-events-none transition-all flex items-center justify-center gap-2 shadow-sm"
+                  >
+                    {isAdding ? (
+                      <>
+                        <span className="material-symbols-outlined text-[16px] animate-spin">progress_activity</span>
+                        <span>Adding...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Create Course</span>
+                        <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
         )}
 
         {courses.length === 0 ? (
@@ -370,7 +400,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             {/* 5. Activity & Analytics Section (2 Columns: 8/12 and 4/12) */}
             <section className="mt-12 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
               {/* Left Column: Recent Notes (8/12) */}
-              <div className="lg:col-span-8 bg-bg-surface rounded-2xl p-6 shadow-xs border border-border-default">
+              <div className="lg:col-span-8 bg-bg-surface rounded-2xl p-6 shadow-xs border border-border-default dark:border-slate-800">
                 <div className="flex items-center justify-between mb-5">
                   <div className="flex items-center gap-2">
                     <span className="material-symbols-outlined text-accent text-[22px]">edit_note</span>
@@ -384,7 +414,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 </div>
 
                 {recentNotes.length === 0 ? (
-                  <div className="p-8 text-center text-text-muted text-sm border border-dashed border-border-default rounded-xl">
+                  <div className="p-8 text-center text-text-muted text-sm border border-dashed border-border-default dark:border-slate-800 rounded-xl">
                     Notes you write while watching lessons appear here automatically.
                   </div>
                 ) : (
@@ -393,7 +423,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                       <article
                         key={idx}
                         onClick={() => onNavigate('player', note.courseId, note.videoId)}
-                        className="p-4 rounded-xl bg-bg-canvas hover:bg-bg-hover transition-colors cursor-pointer border border-border-default/60 group"
+                        className="p-4 rounded-xl bg-bg-canvas hover:bg-bg-hover transition-colors cursor-pointer border border-border-default/60 dark:border-slate-800/80 group"
                       >
                         <p className="text-sm text-text-primary leading-relaxed">
                           “{note.text}”
@@ -401,7 +431,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                         <div className="mt-2.5 flex items-center gap-2 text-xs text-text-secondary">
                           <span className="material-symbols-outlined text-[14px] text-accent">bookmark</span>
                           <span className="font-medium group-hover:text-accent transition-colors">{note.courseTitle}, lesson {note.videoPosition}</span>
-                          <span className="text-border-strong">•</span>
+                          <span className="text-border-strong dark:text-slate-700">•</span>
                           <span className="text-text-muted">
                             {new Date(note.updatedAt).toLocaleDateString()}
                           </span>
@@ -413,7 +443,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               </div>
 
               {/* Right Column: Fully Dynamic Learning Stats & Daily Focus Goals */}
-              <div className="lg:col-span-4 bg-bg-surface rounded-2xl p-6 shadow-xs border border-border-default flex flex-col gap-5">
+              <div className="lg:col-span-4 bg-bg-surface rounded-2xl p-6 shadow-xs border border-border-default dark:border-slate-800 flex flex-col gap-5">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="material-symbols-outlined text-emerald-500 text-[22px]">insights</span>

@@ -100,7 +100,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const initialLetter = displayName.trim().charAt(0).toUpperCase() || 'U';
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 h-14 bg-bg-surface/95 dark:bg-[#0F172A]/90 backdrop-blur-md border-b border-border-default/80">
+    <header className="fixed top-0 left-0 right-0 z-50 h-14 bg-bg-surface/95 dark:bg-[#0F172A]/95 backdrop-blur-md border-b border-border-default dark:border-slate-800">
       <div className={`h-14 ${currentView === 'player' ? 'w-full px-4 sm:px-6' : 'max-w-[1240px] mx-auto px-4 md:px-6 lg:px-8'} flex items-center justify-between`}>
         {/* Left Side: Logo & Navigation */}
         <div className="flex items-center gap-3 min-w-0 max-w-[calc(100%-180px)]">
