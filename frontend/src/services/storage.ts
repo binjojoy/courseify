@@ -155,7 +155,7 @@ class StorageService {
     try {
       const sanitized = videos.map(v => ({
         ...v,
-        description: (v.description || '').substring(4000)
+        description: (v.description || '').substring(0, 4000)
       }));
       localStorage.setItem(`${PREFIX}course:${courseId}:videos`, JSON.stringify(sanitized));
       this.triggerUpdate();
