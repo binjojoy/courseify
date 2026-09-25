@@ -164,12 +164,13 @@ export const CourseCard: React.FC<CourseCardProps> = ({
               Completed · Ready to rewatch
             </p>
           ) : isUnstarted ? (
-            <p className="font-caption text-caption text-text-muted mt-2 line-clamp-1 bg-surface-container-low px-2 py-1 rounded">
+            <p className="font-caption text-caption text-text-muted mt-2 line-clamp-2 min-h-[2.25rem] bg-surface-container-low px-2 py-1 rounded leading-relaxed">
               Unstarted · Ready to begin
             </p>
           ) : (
             <p className="font-caption text-caption text-text-muted mt-2 line-clamp-1 bg-surface-container-low px-2 py-1 rounded">
-              Last: {lastVideo?.title || 'Next video'}
+              <span className="font-semibold">Last watched:</span>{' '}
+              <span className="break-words">{lastVideo?.title || 'Next video'}</span>
             </p>
           )}
         </div>

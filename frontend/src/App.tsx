@@ -24,6 +24,7 @@ export const App: React.FC = () => {
   // Dialog states
   const [resetTargetCourse, setResetTargetCourse] = useState<Course | null>(null);
   const [removeTargetCourse, setRemoveTargetCourse] = useState<Course | null>(null);
+  const [isClearDataOpen, setIsClearDataOpen] = useState(false);
   const [isNamePromptOpen, setIsNamePromptOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastUndoAction, setToastUndoAction] = useState<{ label: string; onUndo: () => void; durationMs?: number } | null>(null);
@@ -177,10 +178,12 @@ export const App: React.FC = () => {
         onRefreshPlaylist={() => {
           showToast('Playlist is synced with YouTube.');
         }}
+        onOpenClearData={() => setIsClearDataOpen(true)}
         onShowToast={showToast}
       />
 
       {/* Primary Page Views */}
+      <div key={currentView} className="page-transition">
       {currentView === 'home' && (
         <HomePage onNavigate={navigateTo} onShowToast={showToast} />
       )}
@@ -217,6 +220,7 @@ export const App: React.FC = () => {
           onGoDashboard={() => navigateTo('dashboard')}
         />
       )}
+      </div>
 
       {/* Reset Progress Confirmation Dialog */}
       <ConfirmDialog
@@ -227,6 +231,21 @@ export const App: React.FC = () => {
         isDestructive={true}
         onConfirm={handleConfirmReset}
         onCancel={() => setResetTargetCourse(null)}
+      />
+
+      <ConfirmDialog
+        isOpen={isClearDataOpen}
+        title="Clear all Courseify data?"
+        body="This removes your courses, progress, notes, favorites, and settings from this browser. This action cannot be undone."
+        confirmLabel="Clear all data"
+        isDestructive={true}
+        onConfirm={() => {
+          storage.clearData();
+          setIsClearDataOpen(false);
+          navigateTo('home');
+          showToast('All Courseify data has been cleared.');
+        }}
+        onCancel={() => setIsClearDataOpen(false)}
       />
 
       {/* Remove Course Confirmation Dialog */}
