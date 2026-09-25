@@ -238,7 +238,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
         {/* Main Column: Player and Content Stage */}
         <div className="flex-1 flex flex-col h-full overflow-y-auto overflow-x-hidden">
           {/* Video Player Viewport Container with Margin & Spacing */}
-          <div className="w-full bg-bg-canvas flex justify-center px-3 sm:px-4 md:px-6">
+          <div className="w-full bg-bg-canvas flex justify-center px-3 py-6 sm:px-4 md:px-6">
             <section className="relative w-full max-w-[1280px] aspect-video bg-player-black select-none shrink-0 overflow-hidden">
               <div className="relative w-full h-full overflow-hidden bg-black courseify-player">
                 {currentVideo ? (
