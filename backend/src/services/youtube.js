@@ -6,6 +6,16 @@ import { SAMPLE_COURSES } from '../data/sampleCourses.js';
  */
 const videoDescCache = new Map();
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 /**
  * Parse colon formatted duration like "4:17:12" or "14:20" or "00:45"
  * @param {string} str 
@@ -90,7 +100,7 @@ export async function fetchVideoDescription(videoId) {
 
   try {
     const url = `https://www.youtube.com/watch?v=${videoId}`;
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.9'
@@ -136,7 +146,7 @@ export async function fetchVideoDescription(videoId) {
  */
 async function scrapeSingleVideo(videoId) {
   const url = `https://www.youtube.com/watch?v=${videoId}`;
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
       'Accept-Language': 'en-US,en;q=0.9'
@@ -229,7 +239,7 @@ async function scrapeSingleVideo(videoId) {
 async function fetchViaYouTubeAPI(playlistId, apiKey) {
   // Step 1: playlists.list
   const playlistUrl = `https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&id=${playlistId}&key=${apiKey}`;
-  const plRes = await fetch(playlistUrl);
+  const plRes = await fetchWithTimeout(playlistUrl);
   if (!plRes.ok) {
     const errorBody = await plRes.json().catch(() => ({}));
     const reason = errorBody?.error?.errors?.[0]?.reason;
@@ -266,7 +276,7 @@ async function fetchViaYouTubeAPI(playlistId, apiKey) {
   let nextPageToken = '';
   do {
     const itemsUrl = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&maxResults=50&playlistId=${playlistId}&key=${apiKey}${nextPageToken ? `&pageToken=${nextPageToken}` : ''}`;
-    const itemsRes = await fetch(itemsUrl);
+    const itemsRes = await fetchWithTimeout(itemsUrl);
     if (!itemsRes.ok) break;
     const itemsData = await itemsRes.json();
     if (itemsData.items) {
@@ -288,7 +298,7 @@ async function fetchViaYouTubeAPI(playlistId, apiKey) {
   for (let i = 0; i < videoIds.length; i += 50) {
     const batch = videoIds.slice(i, i + 50);
     const vUrl = `https://www.googleapis.com/youtube/v3/videos?part=contentDetails,snippet&id=${batch.join(',')}&key=${apiKey}`;
-    const vRes = await fetch(vUrl);
+    const vRes = await fetchWithTimeout(vUrl);
     if (vRes.ok) {
       const vData = await vRes.json();
       if (vData.items) {
@@ -343,7 +353,7 @@ async function fetchViaYouTubeAPI(playlistId, apiKey) {
  */
 async function scrapeYouTubePlaylist(playlistId) {
   const url = `https://www.youtube.com/playlist?list=${playlistId}`;
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
       'Accept-Language': 'en-US,en;q=0.9'

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { VideoItem, CourseProgress, CourseNotes } from '../types';
+import { getPlayableVideos } from '../utils/course';
 
 interface PlaylistSidebarProps {
   videos: VideoItem[];
@@ -32,8 +33,9 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
   const listContainerRef = useRef<HTMLDivElement>(null);
   const currentItemRef = useRef<HTMLDivElement>(null);
 
-  const completedCount = videos.filter(v => progress.videos[v.videoId]?.completed).length;
-  const totalCount = videos.length;
+  const playableVideos = getPlayableVideos(videos);
+  const completedCount = playableVideos.filter(v => progress.videos[v.videoId]?.completed).length;
+  const totalCount = playableVideos.length;
   const percent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
   const isAllCompleted = totalCount > 0 && completedCount === totalCount;
 
@@ -98,7 +100,7 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
     : videos;
 
   return (
-    <aside className="w-full lg:w-[403px] lg:shrink-0 flex flex-col h-full bg-bg-surface dark:bg-[#0F172A] border-t lg:border-t-0 lg:border-l border-border-default select-none relative">
+    <aside className="w-full lg:w-[403px] lg:shrink-0 flex flex-col h-full bg-bg-surface dark:bg-[#0F172A] border-t lg:border-t-0 lg:border-l border-border-default select-none relative" aria-label="Course playlist" data-testid="playlist-sidebar">
       {/* Fixed Progress Header Card */}
       <div className="p-4 border-b border-border-default flex flex-col gap-3.5 bg-bg-surface dark:bg-[#0F172A] shrink-0">
         <div className="flex items-center justify-between">
@@ -108,7 +110,7 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
               <span className="material-symbols-outlined text-[16px] text-success">check_circle</span>
             )}
             <span className="text-sm font-bold text-text-primary tabular-nums">
-              {completedCount} / {totalCount}
+              <span data-testid="progress-indicator">{completedCount} / {totalCount}</span>
             </span>
             <span className="text-xs text-text-muted font-mono">({percent}%)</span>
           </div>
@@ -165,21 +167,24 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
         onScroll={handleScroll}
         tabIndex={0}
         aria-label="Course videos playlist"
+              data-testid="lesson-list"
         className="flex-1 overflow-y-auto px-2 py-3 flex flex-col gap-1.5 focus:outline-none"
       >
         {filteredVideos.map((video, idx) => {
           const isCurrent = video.videoId === currentVideoId;
-          const isCompleted = !!progress.videos[video.videoId]?.completed;
+          const isCompleted = !video.unavailable && !!progress.videos[video.videoId]?.completed;
           const hasNote = !!notes[video.videoId]?.text;
 
           return (
             <div
               key={video.videoId}
+              data-testid="lesson-item"
+              aria-current={isCurrent ? 'true' : undefined}
               id={`playlist-item-${idx}`}
               ref={isCurrent ? currentItemRef : undefined}
               tabIndex={0}
               onKeyDown={(e) => handleKeyDown(e, idx, video.videoId)}
-              onClick={() => onSelectVideo(video.videoId)}
+              onClick={() => !video.unavailable && onSelectVideo(video.videoId)}
               className={`min-h-[3.75rem] py-2.5 px-3 rounded-lg flex items-center justify-between transition-colors cursor-pointer group focus:outline-none focus:ring-2 focus:ring-accent ${
                 isCurrent
                   ? 'bg-accent-subtle/80 dark:bg-[#1E293B]/90 border-l-4 border-accent shadow-sm'
@@ -203,7 +208,7 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
                 {/* Title & Note Badge */}
                 <div className="flex items-center gap-1.5 min-w-0">
                   <span
-                    className={`text-sm truncate transition-colors ${
+                    className={`text-sm line-clamp-2 leading-snug transition-colors ${
                       isCurrent
                         ? 'font-semibold text-text-primary dark:text-white'
                         : isCompleted
@@ -232,15 +237,18 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
                 </span>
 
                 {/* Interactive Checkbox */}
-                <div
+                <button
+                  type="button"
                   role="checkbox"
+                  aria-label={`${isCompleted ? 'Mark incomplete' : 'Mark complete'}: ${video.title}`}
                   aria-checked={isCompleted}
-                  tabIndex={0}
+                  disabled={video.unavailable}
                   onClick={(e) => {
                     e.stopPropagation();
                     onToggleComplete(video.videoId);
                   }}
-                  className={`w-5 h-5 rounded flex items-center justify-center cursor-pointer transition-colors ${
+                  onKeyDown={(e) => e.stopPropagation()}
+                  className={`w-5 h-5 rounded flex items-center justify-center cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-30 disabled:cursor-not-allowed ${
                     isCompleted
                       ? 'bg-success text-white'
                       : 'border-2 border-border-strong hover:border-text-secondary bg-transparent'
@@ -250,7 +258,7 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
                   {isCompleted && (
                     <span className="material-symbols-outlined text-[14px] font-bold">check</span>
                   )}
-                </div>
+                </button>
               </div>
             </div>
           );

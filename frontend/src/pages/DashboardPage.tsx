@@ -3,7 +3,8 @@ import { Course, FavoriteVideo } from '../types';
 import { storage } from '../services/storage';
 import { CourseCard } from '../components/CourseCard';
 import { ContinueLearningBanner } from '../components/ContinueLearningBanner';
-import { fetchPlaylist, ApiError } from '../services/api';
+import { fetchPlaylist, ApiError, getYouTubeSource } from '../services/api';
+import { getCourseSourceKey } from '../utils/course';
 
 interface DashboardPageProps {
   onNavigate: (view: 'home' | 'dashboard' | 'player', courseId?: string, videoId?: string) => void;
@@ -32,6 +33,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const [quickUrl, setQuickUrl] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  const quickAddAbortRef = React.useRef<AbortController | null>(null);
 
   // Focus Timer / Goal
   const [dailyGoalMinutes, setDailyGoalMinutes] = useState<number>(
@@ -58,12 +60,25 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     e.preventDefault();
     const val = quickUrl.trim();
     if (!val) return;
+    const source = getYouTubeSource(val);
+    if (!source) {
+      setAddError('Enter a valid YouTube playlist or video URL.');
+      return;
+    }
+    const duplicate = storage.getCourses().find(course => getCourseSourceKey(course) === `${source.type}:${source.id}` || course.id === source.id || course.id === `video_${source.id}`);
+    if (duplicate) {
+      setAddError('This source is already in your courses.');
+      return;
+    }
 
     setIsAdding(true);
     setAddError(null);
+    const controller = new AbortController();
+    quickAddAbortRef.current = controller;
 
     try {
-      const { course, videos } = await fetchPlaylist(val);
+      const { course, videos } = await fetchPlaylist(val, controller.signal);
+      if (controller.signal.aborted) return;
       storage.addOrUpdateCourse(course);
       storage.saveCourseVideos(course.id, videos);
       onShowToast(`Course "${course.title}" added successfully!`);
@@ -71,14 +86,21 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       setIsQuickAddOpen(false);
       onNavigate('player', course.id);
     } catch (err: any) {
-      if (err instanceof ApiError) {
+      if (err instanceof ApiError && err.code !== 'CANCELLED') {
         setAddError(err.message);
-      } else {
+      } else if (err.code !== 'CANCELLED') {
         setAddError(err.message || "Couldn't reach YouTube. Check link and try again.");
       }
     } finally {
+      quickAddAbortRef.current = null;
       setIsAdding(false);
     }
+  };
+
+  const handleCancelQuickAdd = () => {
+    quickAddAbortRef.current?.abort();
+    setIsAdding(false);
+    setAddError(null);
   };
 
   const handleSaveGoal = () => {
@@ -109,10 +131,12 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     return 0;
   });
 
-  const continueCourse = sortedCourses.find(c => {
+  const continueCourse = [...courses].sort((a, b) => {
+    return new Date(b.lastOpenedAt || b.addedAt).getTime() - new Date(a.lastOpenedAt || a.addedAt).getTime();
+  }).find(c => {
     const metrics = storage.getCourseMetrics(c.id);
     return !metrics.isCompleted;
-  }) || sortedCourses[0];
+  });
 
   const handleOpenCourse = (courseId: string, videoId?: string) => {
     onNavigate('player', courseId, videoId);
@@ -130,7 +154,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const goalProgressPercent = Math.min(100, Math.round((stats.dailyMinutesStudied / (dailyGoalMinutes || 60)) * 100));
 
   return (
-    <main className="w-full pt-14 bg-bg-canvas min-h-screen">
+    <main className="w-full pt-14 bg-bg-canvas min-h-screen" data-testid="dashboard">
       <div className="w-full max-w-[1240px] mx-auto px-4 md:px-6 lg:px-8 pb-16">
         {/* 1. Page Header */}
         <header className="pt-10 pb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -182,12 +206,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 </button>
               </div>
 
-              <form onSubmit={handleQuickAddSubmit} className="flex flex-col gap-4 mt-2">
+              <form onSubmit={handleQuickAddSubmit} aria-label="Add a YouTube course from the dashboard" className="flex flex-col gap-4 mt-2">
                 <div className="flex flex-col gap-1.5">
                   <label htmlFor="quick-course-url" className="text-xs font-semibold text-text-secondary">
                     YouTube URL
                   </label>
                   <input
+                    data-testid="quick-playlist-url-input"
                     id="quick-course-url"
                     type="url"
                     value={quickUrl}
@@ -203,7 +228,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 </div>
 
                 {addError && (
-                  <div className="text-error text-xs flex items-center gap-1.5 font-medium animate-fadeIn bg-error/10 p-2.5 rounded-lg border border-error/20">
+                  <div role="alert" aria-live="assertive" className="text-error text-xs flex items-center gap-1.5 font-medium animate-fadeIn bg-error/10 p-2.5 rounded-lg border border-error/20">
                     <span className="material-symbols-outlined text-[16px] shrink-0">error</span>
                     <span>{addError}</span>
                   </div>
@@ -212,10 +237,10 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 <div className="flex items-center justify-end gap-2.5 pt-2">
                   <button
                     type="button"
-                    onClick={() => setIsQuickAddOpen(false)}
+                    onClick={() => isAdding ? handleCancelQuickAdd() : setIsQuickAddOpen(false)}
                     className="h-10 px-4 rounded-xl border border-border-default dark:border-slate-800 text-text-primary text-xs font-semibold hover:bg-bg-hover transition-colors"
                   >
-                    Cancel
+                    {isAdding ? 'Cancel fetch' : 'Cancel'}
                   </button>
                   <button
                     type="submit"
@@ -491,7 +516,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   <div className="flex flex-col p-3.5 rounded-xl bg-bg-canvas hover:bg-bg-hover transition-colors border border-border-default/60">
                     <div className="flex items-center justify-between text-text-muted mb-1.5">
                       <span className="material-symbols-outlined text-[18px]">workspace_premium</span>
-                      <span className="text-xs text-text-muted">Target: 3</span>
+                      <span className="text-xs text-text-muted">All courses</span>
                     </div>
                     <span className="text-xl font-bold text-text-primary tabular-nums">
                       {stats.coursesCompleted}
@@ -582,7 +607,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   max="480"
                   step="15"
                   value={tempGoalMinutes}
-                  onChange={(e) => setTempGoalMinutes(Math.max(15, parseInt(e.target.value) || 15))}
+                  onChange={(e) => setTempGoalMinutes(Math.min(480, Math.max(15, parseInt(e.target.value) || 15)))}
                   className="w-24 h-11 px-3 bg-bg-canvas border border-border-default rounded-xl font-bold text-center text-text-primary focus:outline-none focus:border-accent"
                 />
                 <span className="text-sm font-semibold text-text-primary">Minutes per day</span>

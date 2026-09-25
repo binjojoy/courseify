@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
-import { fetchPlaylist, ApiError } from '../services/api';
+import { fetchPlaylist, ApiError, getYouTubeSource } from '../services/api';
+import { getCourseSourceKey } from '../utils/course';
 import { storage } from '../services/storage';
 
 interface HomePageProps {
@@ -29,8 +30,16 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
     setFetchProgress("Connecting to YouTube…");
 
     // Check if duplicate course already exists
+    const source = getYouTubeSource(val);
+    if (!source) {
+      setErrorMessage('Enter a valid YouTube playlist or video URL.');
+      setIsLoading(false);
+      setFetchProgress(null);
+      return;
+    }
+
     const existingCourses = storage.getCourses();
-    const matchExisting = existingCourses.find(c => val.includes(c.id));
+    const matchExisting = existingCourses.find(c => getCourseSourceKey(c) === `${source.type}:${source.id}` || c.id === source.id || c.id === `video_${source.id}`);
 
     if (matchExisting) {
       setDuplicateMessage("This playlist is already in your courses. Opening it now.");
@@ -43,7 +52,10 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
 
     try {
       setFetchProgress("Fetching playlist metadata and lessons…");
-      const { course, videos } = await fetchPlaylist(val);
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+      const { course, videos } = await fetchPlaylist(val, controller.signal);
+      if (controller.signal.aborted) return;
 
       // Save course and its videos
       storage.addOrUpdateCourse(course);
@@ -55,11 +67,16 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
     } catch (err: any) {
       setIsLoading(false);
       setFetchProgress(null);
-      if (err instanceof ApiError) {
+      if (err instanceof ApiError && err.code !== 'CANCELLED') {
         setErrorMessage(err.message);
-      } else {
+      } else if (err.code !== 'CANCELLED') {
         setErrorMessage(err.message || "Couldn't reach YouTube. Check your connection and try again.");
       }
+    }
+    finally {
+      abortControllerRef.current = null;
+      setIsLoading(false);
+      setFetchProgress(null);
     }
   };
 
@@ -82,7 +99,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
   };
 
   return (
-    <main className="w-full pt-14 bg-bg-canvas min-h-screen text-text-primary selection:bg-accent-subtle selection:text-accent relative overflow-x-hidden">
+    <main className="w-full pt-14 bg-bg-canvas min-h-screen text-text-primary selection:bg-accent-subtle selection:text-accent relative overflow-x-hidden" data-testid="add-course-page">
       <div className="relative min-h-[calc(100vh-3.5rem)] w-full flex flex-col justify-between overflow-hidden">
         {/* Soft Ambient Background Glow */}
         <div className="absolute inset-0 pointer-events-none select-none z-0">
@@ -112,6 +129,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
           <div className="w-full max-w-2xl mb-4">
             <form
               id="playlist-form"
+              aria-label="Add a YouTube course"
               onSubmit={handleSubmit}
               className="w-full relative group shadow-lg shadow-accent/5 rounded-2xl"
             >
@@ -129,6 +147,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
 
                 {/* Input */}
                 <input
+                  data-testid="playlist-url-input"
                   type="url"
                   value={url}
                   onChange={(e) => {
@@ -158,6 +177,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
 
                   <button
                     type="submit"
+                    data-testid="import-playlist-button"
                     disabled={isLoading || !url.trim()}
                     aria-label="Create Course"
                     className="h-11 px-5 rounded-xl bg-accent text-white font-medium text-[14px] flex items-center gap-2 hover:bg-accent-hover active:bg-accent-pressed disabled:opacity-50 disabled:pointer-events-none transition-all focus:outline-none shadow-sm"
@@ -186,7 +206,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
 
               {/* Error message */}
               {errorMessage && (
-                <div className="mt-2 px-2 text-error text-[13px] flex items-center gap-1.5 font-medium animate-fadeIn text-left">
+                <div role="alert" aria-live="assertive" className="mt-2 px-2 text-error text-[13px] flex items-center gap-1.5 font-medium animate-fadeIn text-left">
                   <span className="material-symbols-outlined text-[16px]">error</span>
                   <span>{errorMessage}</span>
                 </div>
@@ -198,7 +218,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
                   <div className="w-full h-1 bg-border-default rounded-full overflow-hidden">
                     <div className="h-full bg-accent animate-pulse w-3/4"></div>
                   </div>
-                  <div className="flex items-center justify-between text-xs text-text-secondary">
+                  <div className="flex items-center justify-between text-xs text-text-secondary" role="status" aria-live="polite">
                     <span>{fetchProgress || 'Fetching playlist…'}</span>
                     <button
                       type="button"

@@ -27,7 +27,7 @@ export const Toast: React.FC<ToastProps> = ({ message, onClose, undoAction }) =>
   if (!message) return null;
 
   return (
-    <div className="fixed bottom-6 right-6 sm:bottom-8 sm:right-8 z-50 flex items-center gap-3 px-4 py-3 bg-bg-elevated text-text-primary rounded-xl shadow-2xl border border-border-default animate-fadeIn max-w-[90vw]">
+    <div role="status" aria-live="polite" aria-atomic="true" className="fixed bottom-6 right-6 sm:bottom-8 sm:right-8 z-50 flex items-center gap-3 px-4 py-3 bg-bg-elevated text-text-primary rounded-xl shadow-2xl border border-border-default animate-fadeIn max-w-[90vw]">
       <span className="material-symbols-outlined text-[20px] text-accent shrink-0">info</span>
       <span className="text-sm font-medium">{message}</span>
 
