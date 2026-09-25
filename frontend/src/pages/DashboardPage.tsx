@@ -154,7 +154,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const goalProgressPercent = Math.min(100, Math.round((stats.dailyMinutesStudied / (dailyGoalMinutes || 60)) * 100));
 
   return (
-    <main className="w-full pt-14 bg-bg-canvas min-h-screen">
+    <main className="w-full pt-14 bg-bg-canvas min-h-screen" data-testid="dashboard">
       <div className="w-full max-w-[1240px] mx-auto px-4 md:px-6 lg:px-8 pb-16">
         {/* 1. Page Header */}
         <header className="pt-10 pb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -206,12 +206,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 </button>
               </div>
 
-              <form onSubmit={handleQuickAddSubmit} className="flex flex-col gap-4 mt-2">
+              <form onSubmit={handleQuickAddSubmit} aria-label="Add a YouTube course from the dashboard" className="flex flex-col gap-4 mt-2">
                 <div className="flex flex-col gap-1.5">
                   <label htmlFor="quick-course-url" className="text-xs font-semibold text-text-secondary">
                     YouTube URL
                   </label>
                   <input
+                    data-testid="quick-playlist-url-input"
                     id="quick-course-url"
                     type="url"
                     value={quickUrl}
@@ -227,7 +228,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 </div>
 
                 {addError && (
-                  <div className="text-error text-xs flex items-center gap-1.5 font-medium animate-fadeIn bg-error/10 p-2.5 rounded-lg border border-error/20">
+                  <div role="alert" aria-live="assertive" className="text-error text-xs flex items-center gap-1.5 font-medium animate-fadeIn bg-error/10 p-2.5 rounded-lg border border-error/20">
                     <span className="material-symbols-outlined text-[16px] shrink-0">error</span>
                     <span>{addError}</span>
                   </div>

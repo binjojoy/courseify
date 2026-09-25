@@ -150,6 +150,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
           events: {
             onReady: (event: any) => {
               if (!isMounted) return;
+              event.target.getIframe?.()?.setAttribute('title', 'YouTube video player');
               setIsLoading(false);
               if (initialPositionSec > 0) {
                 event.target.seekTo(initialPositionSec, true);
@@ -537,6 +538,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   return (
     <div
       ref={wrapperRef}
+      data-testid="video-player"
       onMouseMove={handleMouseMove}
       onMouseLeave={() => {
         if (isPlaying) {

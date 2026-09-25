@@ -49,6 +49,7 @@ export const CourseCard: React.FC<CourseCardProps> = ({
       role="link"
       tabIndex={0}
       aria-label={`Open course ${course.title}`}
+      data-testid="course-card"
       className="group flex flex-col justify-between bg-bg-surface rounded-xl p-3 shadow-sm hover:shadow-md transition-all border border-border-default cursor-pointer relative focus:outline-none focus:ring-2 focus:ring-accent"
     >
       <div className="flex flex-col">

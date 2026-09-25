@@ -254,7 +254,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
   }
 
   return (
-    <main className="w-full pt-14 bg-bg-canvas min-h-screen text-text-primary selection:bg-accent-subtle selection:text-accent">
+    <main className="w-full pt-14 bg-bg-canvas min-h-screen text-text-primary selection:bg-accent-subtle selection:text-accent" data-testid="course-player">
       <div className="flex flex-col lg:flex-row w-full h-[calc(100vh-56px)] overflow-hidden bg-bg-canvas text-text-primary">
         {/* Main Column: Player and Content Stage */}
         <div className="flex-1 flex flex-col h-full overflow-y-auto overflow-x-hidden">
@@ -343,10 +343,10 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
             {/* Title & Primary Header Row */}
             <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pb-6">
               <div className="min-w-0 flex-1">
-                <h1 className="text-xl sm:text-2xl font-bold text-text-primary tracking-tight font-title">
+                <h1 className="text-xl sm:text-2xl font-bold text-text-primary tracking-tight font-title" data-testid="current-lesson-title">
                   {currentVideo?.title}
                 </h1>
-                <div className="flex items-center gap-3 mt-1.5 text-xs text-text-secondary">
+                <div className="flex items-center gap-3 mt-1.5 text-xs text-text-secondary" data-testid="lesson-progress">
                   <span className="font-medium text-text-primary">
                     Video {currentIndex + 1} of {videos.length}
                   </span>

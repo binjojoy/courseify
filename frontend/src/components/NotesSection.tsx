@@ -156,6 +156,8 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
         <div className="w-full flex flex-col rounded-xl border border-border-default bg-bg-surface dark:bg-[#111827] focus-within:border-accent/80 focus-within:ring-1 focus-within:ring-accent/30 transition-all overflow-hidden shadow-sm">
           <textarea
             ref={textareaRef}
+            data-testid="notes-editor"
+            aria-label="Lesson notes"
             rows={4}
             value={text}
             onChange={handleChange}

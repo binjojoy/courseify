@@ -100,7 +100,7 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
     : videos;
 
   return (
-    <aside className="w-full lg:w-[403px] lg:shrink-0 flex flex-col h-full bg-bg-surface dark:bg-[#0F172A] border-t lg:border-t-0 lg:border-l border-border-default select-none relative">
+    <aside className="w-full lg:w-[403px] lg:shrink-0 flex flex-col h-full bg-bg-surface dark:bg-[#0F172A] border-t lg:border-t-0 lg:border-l border-border-default select-none relative" aria-label="Course playlist" data-testid="playlist-sidebar">
       {/* Fixed Progress Header Card */}
       <div className="p-4 border-b border-border-default flex flex-col gap-3.5 bg-bg-surface dark:bg-[#0F172A] shrink-0">
         <div className="flex items-center justify-between">
@@ -110,7 +110,7 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
               <span className="material-symbols-outlined text-[16px] text-success">check_circle</span>
             )}
             <span className="text-sm font-bold text-text-primary tabular-nums">
-              {completedCount} / {totalCount}
+              <span data-testid="progress-indicator">{completedCount} / {totalCount}</span>
             </span>
             <span className="text-xs text-text-muted font-mono">({percent}%)</span>
           </div>
@@ -167,6 +167,7 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
         onScroll={handleScroll}
         tabIndex={0}
         aria-label="Course videos playlist"
+              data-testid="lesson-list"
         className="flex-1 overflow-y-auto px-2 py-3 flex flex-col gap-1.5 focus:outline-none"
       >
         {filteredVideos.map((video, idx) => {
@@ -177,6 +178,8 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
           return (
             <div
               key={video.videoId}
+              data-testid="lesson-item"
+              aria-current={isCurrent ? 'true' : undefined}
               id={`playlist-item-${idx}`}
               ref={isCurrent ? currentItemRef : undefined}
               tabIndex={0}

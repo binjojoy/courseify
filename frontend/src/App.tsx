@@ -14,8 +14,9 @@ import { getPlayableVideos } from './utils/course';
 import { PrivacyPage } from './pages/PrivacyPage';
 import { TermsPage } from './pages/TermsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
+import { AuditPage } from './pages/AuditPage';
 
-type ViewMode = 'home' | 'dashboard' | 'player' | 'privacy' | 'terms' | 'notfound';
+type ViewMode = 'home' | 'dashboard' | 'player' | 'privacy' | 'terms' | 'notfound' | 'audit';
 
 export const App: React.FC = () => {
   // Route selection is resolved after persisted courses are available.
@@ -48,11 +49,17 @@ export const App: React.FC = () => {
       return;
     }
 
+    if (hash === '__audit' && import.meta.env.DEV) {
+      setCurrentView('audit');
+      return;
+    }
+
     if (hash.startsWith('course/')) {
       const parts = hash.split('?');
-      const courseId = parts[0].replace('course/', '');
+      const routeParts = parts[0].split('/');
+      const courseId = routeParts[1];
       const searchParams = new URLSearchParams(parts[1] || '');
-      const videoId = searchParams.get('v') || undefined;
+      const videoId = routeParts[2] === 'lesson' ? routeParts[3] : searchParams.get('v') || undefined;
 
       const course = storage.getCourse(courseId);
       if (!course) {
@@ -258,6 +265,9 @@ export const App: React.FC = () => {
           onGoHome={() => navigateTo('home')}
           onGoDashboard={() => navigateTo('dashboard')}
         />
+      )}
+      {currentView === 'audit' && import.meta.env.DEV && (
+        <AuditPage onNavigate={navigateTo} />
       )}
       </div>
 

@@ -130,9 +130,11 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             </>
           ) : (
-            <button
+            <a
+              href="#/add"
               onClick={() => onNavigate('home')}
               className="flex items-center gap-2.5 focus:outline-none group"
+              aria-label="Courseify add course"
             >
               <div className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center text-white shadow-sm shrink-0 transition-transform group-hover:scale-105">
                 <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
@@ -142,12 +144,12 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span className="text-[18px] font-bold text-text-primary tracking-tight">
                 Courseify
               </span>
-            </button>
+            </a>
           )}
         </div>
 
         {/* Right Side: Dashboard Link, Theme Toggle, Avatar Menu */}
-        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+        <nav aria-label="Primary navigation" className="flex items-center gap-2 sm:gap-3 shrink-0">
           {/* Dashboard Icon Button on Right Side */}
           {currentView !== 'player' && (
             <button
@@ -314,7 +316,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             className="hidden"
             onChange={handleImportFile}
           />
-        </div>
+        </nav>
       </div>
     </header>
     <ConfirmDialog
