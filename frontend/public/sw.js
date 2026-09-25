@@ -1,7 +1,5 @@
-const CACHE_NAME = 'courseify-v1';
+const CACHE_NAME = 'courseify-v2';
 const ASSETS = [
-  '/',
-  '/index.html',
   '/manifest.json'
 ];
 
@@ -35,6 +33,17 @@ self.addEventListener('fetch', (event) => {
       event.request.url.includes('googlevideo.com') || 
       event.request.url.includes('ytimg.com') ||
       event.request.url.includes('/api/')) {
+    return;
+  }
+
+  // Always get the HTML shell from the current deployment. A cached index can
+  // reference hashed assets that were removed by a later Vercel deployment.
+  if (event.request.mode === 'navigate' || event.request.destination === 'document') {
+    event.respondWith(
+      fetch(event.request, { cache: 'no-store' })
+        .then((response) => response)
+        .catch(() => caches.match('/index.html'))
+    );
     return;
   }
 
