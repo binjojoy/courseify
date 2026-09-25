@@ -2,6 +2,15 @@ import { Course, VideoItem, CourseProgress, CourseNotes, UserProfile, AppSetting
 import { DEFAULT_PROFILE, DEFAULT_SETTINGS } from './sampleData';
 
 const PREFIX = 'courseify:v1:';
+const ACTIVITY_KEY = `${PREFIX}watch-activity`;
+const ACCESS_DAYS_KEY = `${PREFIX}access-days`;
+
+const getDateKey = (date = new Date()) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 class StorageService {
   private hasInitialized = false;
@@ -44,6 +53,16 @@ class StorageService {
 
       if (!localStorage.getItem(`${PREFIX}settings`)) {
         this.saveSettings(DEFAULT_SETTINGS);
+      }
+
+      const today = getDateKey();
+      const settings = this.getSettings();
+      if (!settings.firstAccessDate) {
+        this.saveSettings({ ...settings, firstAccessDate: today });
+      }
+      const accessDays = this.getAccessDays();
+      if (!accessDays.includes(today)) {
+        localStorage.setItem(ACCESS_DAYS_KEY, JSON.stringify([...accessDays, today]));
       }
     } catch (e) {
       console.warn('LocalStorage initialization warning:', e);
@@ -244,6 +263,37 @@ class StorageService {
     this.saveCourseProgress(courseId, progress);
   }
 
+  recordWatchTime(seconds: number): void {
+    if (!Number.isFinite(seconds) || seconds <= 0) return;
+    try {
+      const activity = this.getWatchActivity();
+      const today = getDateKey();
+      activity[today] = (activity[today] || 0) + Math.min(seconds, 5);
+      localStorage.setItem(ACTIVITY_KEY, JSON.stringify(activity));
+      this.triggerUpdate();
+    } catch (e) {
+      this.handleQuotaError(e);
+    }
+  }
+
+  private getWatchActivity(): Record<string, number> {
+    try {
+      const data = localStorage.getItem(ACTIVITY_KEY);
+      return data ? JSON.parse(data) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  private getAccessDays(): string[] {
+    try {
+      const data = localStorage.getItem(ACCESS_DAYS_KEY);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  }
+
   resetCourseProgress(courseId: string): void {
     const progress: CourseProgress = {
       lastVideoId: '',
@@ -393,46 +443,57 @@ class StorageService {
   // --- Fully Dynamic Learning Stats & Weekly Activity ---
   getLearningStats(): LearningStats {
     const courses = this.getCourses();
-    let totalWatchedSec = 0;
+    const activity = this.getWatchActivity();
+    const totalWatchedSec = Object.values(activity).reduce((total, seconds) => total + seconds, 0);
     let completedVideosCount = 0;
     let completedCoursesCount = 0;
 
     for (const course of courses) {
       const metrics = this.getCourseMetrics(course.id);
-      totalWatchedSec += metrics.watchedDurationSec;
       completedVideosCount += metrics.completedVideos;
       if (metrics.isCompleted) completedCoursesCount++;
     }
 
     const totalHours = +(totalWatchedSec / 3600).toFixed(1);
-    const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    const todayIndex = (new Date().getDay() + 6) % 7; // Monday = 0
-
-    // Construct dynamically calculated weekly momentum bars
+    const todaySeconds = activity[getDateKey()] || 0;
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const now = new Date();
+    const todayIndex = now.getDay();
+    const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - todayIndex);
     const weeklyHours = dayNames.map((day, idx) => {
-      if (idx > todayIndex) {
-        return { day, hours: 0 };
-      }
-      if (idx === todayIndex) {
-        return { day, hours: Math.min(+(totalWatchedSec / 3600).toFixed(1), 2.5) };
-      }
-      // Past days based on activity
-      const factor = (idx + 1) / (todayIndex + 1);
-      return { day, hours: +(Math.min(totalHours * factor * 0.4, 3.2)).toFixed(1) };
+      const date = new Date(weekStart);
+      date.setDate(weekStart.getDate() + idx);
+      return { day, hours: +(idx <= todayIndex ? ((activity[getDateKey(date)] || 0) / 3600).toFixed(1) : 0) };
     });
 
-    const activeDaysCount = weeklyHours.filter(d => d.hours > 0).length || (courses.length > 0 ? 1 : 0);
-    const avgHoursPerDay = activeDaysCount > 0 ? +(totalHours / activeDaysCount).toFixed(1) : 0;
+    const accessDays = new Set(this.getAccessDays());
+    let dayStreak = 0;
+    for (let offset = 0; offset <= todayIndex + 365; offset++) {
+      const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - offset);
+      if (!accessDays.has(getDateKey(date))) break;
+      dayStreak++;
+    }
+    const activeDaysCount = weeklyHours.filter(d => d.hours > 0).length;
+    const avgHoursPerDay = activeDaysCount > 0 ? +(weeklyHours.reduce((total, d) => total + d.hours, 0) / activeDaysCount).toFixed(1) : 0;
 
     return {
       hoursWatched: Math.round(totalHours),
       videosCompleted: completedVideosCount,
       coursesCompleted: completedCoursesCount,
-      dayStreak: courses.length > 0 ? activeDaysCount : 0,
+      dayStreak,
       avgHoursPerDay,
-      dailyMinutesStudied: Math.round((totalWatchedSec % 3600) / 60) + Math.floor(totalWatchedSec / 3600) * 60,
+      dailyMinutesStudied: Math.floor(todaySeconds / 60),
       weeklyHours
     };
+  }
+
+  clearData(): void {
+    Object.keys(localStorage)
+      .filter(key => key.startsWith(PREFIX))
+      .forEach(key => localStorage.removeItem(key));
+    this.hasInitialized = false;
+    this.init();
+    this.triggerUpdate();
   }
 
   // --- Export / Import JSON Backup (ST-5) ---

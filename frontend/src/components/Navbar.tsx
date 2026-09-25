@@ -11,6 +11,7 @@ interface NavbarProps {
   onOpenRemoveCourse?: (courseId: string) => void;
   onRefreshPlaylist?: () => void;
   onShowToast: (msg: string) => void;
+  onOpenClearData: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -21,7 +22,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenNamePrompt,
   onOpenRemoveCourse,
   onRefreshPlaylist,
-  onShowToast
+  onShowToast,
+  onOpenClearData
 }) => {
   const [profile, setProfile] = useState<UserProfile>(storage.getProfile());
   const [settings, setSettings] = useState<AppSettings>(storage.getSettings());
@@ -283,6 +285,17 @@ export const Navbar: React.FC<NavbarProps> = ({
                 >
                   <span className="material-symbols-outlined text-[18px]">upload</span>
                   <span>Import backup (JSON)</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setIsAvatarOpen(false);
+                    onOpenClearData();
+                  }}
+                  className="w-full text-left px-3 py-2 rounded hover:bg-error-subtle text-error flex items-center gap-2"
+                >
+                  <span className="material-symbols-outlined text-[18px]">delete_sweep</span>
+                  <span>Clear all data</span>
                 </button>
 
                 <div className="h-[1px] bg-border-default my-1"></div>

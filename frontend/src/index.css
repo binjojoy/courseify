@@ -72,6 +72,24 @@ body {
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
+button, a, input, textarea, select {
+  transition-duration: 180ms;
+  transition-timing-function: ease-out;
+}
+
+#root {
+  animation: pageEnter 0.35s ease-out both;
+}
+
+.page-transition {
+  animation: pageEnter 0.28s ease-out both;
+}
+
+@keyframes pageEnter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* Material symbols font icon settings */
 .material-symbols-outlined {
   font-family: 'Material Symbols Outlined' !important;
@@ -122,6 +140,14 @@ body {
 
 .animate-scaleUp {
   animation: scaleUp 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* Tabular figures for numbers */

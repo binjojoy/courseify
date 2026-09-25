@@ -59,6 +59,8 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   const hideControlsTimeoutRef = useRef<any>(null);
   const lastTimeRef = useRef<number>(initialPositionSec);
   const autoCompleteTriggeredRef = useRef(false);
+  const isPlayingRef = useRef(false);
+  const lastSampleTimeRef = useRef<number | null>(null);
 
   // Load YouTube Iframe API Script
   useEffect(() => {
@@ -171,6 +173,8 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
               if (!isMounted) return;
               if (event.data === window.YT.PlayerState.PLAYING) {
                 setIsPlaying(true);
+                isPlayingRef.current = true;
+                lastSampleTimeRef.current = event.target.getCurrentTime();
                 setIsLoading(false);
                 // Re-fetch qualities when video starts playing (they may not be available before)
                 try {
@@ -179,10 +183,14 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
                 } catch {}
               } else if (event.data === window.YT.PlayerState.PAUSED) {
                 setIsPlaying(false);
+                isPlayingRef.current = false;
+                lastSampleTimeRef.current = null;
                 const time = event.target.getCurrentTime();
                 storage.saveVideoPosition(courseId, videoId, time);
               } else if (event.data === window.YT.PlayerState.ENDED) {
                 setIsPlaying(false);
+                isPlayingRef.current = false;
+                lastSampleTimeRef.current = null;
                 const time = event.target.getDuration();
                 storage.saveVideoPosition(courseId, videoId, time);
                 if (onAutoComplete) onAutoComplete(videoId);
@@ -192,6 +200,8 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
                 }
               } else if (event.data === window.YT.PlayerState.BUFFERING) {
                 setIsLoading(true);
+                isPlayingRef.current = false;
+                lastSampleTimeRef.current = null;
               }
             },
             onPlaybackQualityChange: (event: any) => {
@@ -264,7 +274,15 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
               onAutoComplete(videoId);
             }
 
-            // Save position every poll cycle
+            if (isPlayingRef.current && lastSampleTimeRef.current !== null) {
+              const watchedDelta = cur - lastSampleTimeRef.current;
+              if (watchedDelta > 0 && watchedDelta <= 2) {
+                storage.recordWatchTime(watchedDelta);
+              }
+            }
+            lastSampleTimeRef.current = isPlayingRef.current ? cur : null;
+
+            // Save resume position independently from watch-time accounting.
             storage.saveVideoPosition(courseId, videoId, cur);
           }
         } catch {}

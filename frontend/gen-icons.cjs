@@ -1,12 +1,10 @@
-// Generate simple PNG icons for PWA without external deps
-// Uses raw PNG binary format (minimal PNG: solid color square with 'C' text isn't possible without canvas,
-// but we can create valid solid-color PNGs using pure Node.js)
+// Generate Courseify's branded PWA icons without external dependencies.
 
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 
-function createPNG(size, r, g, b) {
+function createPNG(size) {
   // PNG Signature
   const sig = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
@@ -15,22 +13,54 @@ function createPNG(size, r, g, b) {
   ihdr.writeUInt32BE(size, 0);
   ihdr.writeUInt32BE(size, 4);
   ihdr[8] = 8;  // bit depth
-  ihdr[9] = 2;  // color type: RGB
+  ihdr[9] = 6;  // color type: RGBA
   ihdr[10] = 0; // compression
   ihdr[11] = 0; // filter
   ihdr[12] = 0; // interlace
   const ihdrChunk = makeChunk('IHDR', ihdr);
 
-  // IDAT chunk - raw scanlines
-  const rawRow = Buffer.alloc(1 + size * 3);
-  rawRow[0] = 0; // filter none
-  for (let x = 0; x < size; x++) {
-    rawRow[1 + x * 3] = r;
-    rawRow[1 + x * 3 + 1] = g;
-    rawRow[1 + x * 3 + 2] = b;
+  // IDAT chunk - a blue gradient with a book and play mark.
+  const pixels = Buffer.alloc(size * size * 4);
+  const setPixel = (x, y, color) => {
+    if (x < 0 || y < 0 || x >= size || y >= size) return;
+    const index = (y * size + x) * 4;
+    pixels[index] = color[0];
+    pixels[index + 1] = color[1];
+    pixels[index + 2] = color[2];
+    pixels[index + 3] = color[3] ?? 255;
+  };
+  const insideTriangle = (x, y, a, b, c) => {
+    const area = (p, q, r) => Math.abs((p[0] * (q[1] - r[1]) + q[0] * (r[1] - p[1]) + r[0] * (p[1] - q[1])) / 2);
+    return Math.abs(area(a, b, c) - area([x, y], b, c) - area(a, [x, y], c) - area(a, b, [x, y])) < 1;
+  };
+  const center = size / 2;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const blend = y / size;
+      setPixel(x, y, [30 - Math.round(blend * 10), 94 - Math.round(blend * 30), 210 - Math.round(blend * 45), 255]);
+    }
+  }
+  for (let y = size * 0.28; y < size * 0.72; y++) {
+    const curve = Math.pow((y - center) / (size * 0.24), 2) * size * 0.06;
+    for (let x = size * 0.17 + curve; x < size * 0.83 - curve; x++) {
+      setPixel(Math.floor(x), Math.floor(y), x < center ? [248, 250, 252, 255] : [219, 234, 254, 255]);
+    }
+  }
+  const a = [center - size * 0.05, size * 0.39];
+  const b = [center + size * 0.1, center];
+  const c = [center - size * 0.05, size * 0.61];
+  for (let y = size * 0.38; y < size * 0.63; y++) {
+    for (let x = center - size * 0.08; x < center + size * 0.12; x++) {
+      if (insideTriangle(x, y, a, b, c)) setPixel(Math.floor(x), Math.floor(y), [29, 78, 216, 255]);
+    }
   }
   const rows = [];
-  for (let y = 0; y < size; y++) rows.push(rawRow);
+  for (let y = 0; y < size; y++) {
+    const rawRow = Buffer.alloc(1 + size * 4);
+    rawRow[0] = 0;
+    pixels.copy(rawRow, 1, y * size * 4, (y + 1) * size * 4);
+    rows.push(rawRow);
+  }
   const raw = Buffer.concat(rows);
   const compressed = zlib.deflateSync(raw);
   const idatChunk = makeChunk('IDAT', compressed);
@@ -74,11 +104,10 @@ function makeCrcTable() {
 
 const outDir = path.join(__dirname, 'public');
 
-// Indigo/violet color: #6366f1 = rgb(99, 102, 241)
-const png192 = createPNG(192, 99, 102, 241);
+const png192 = createPNG(192);
 fs.writeFileSync(path.join(outDir, 'icon-192.png'), png192);
 console.log('Written public/icon-192.png');
 
-const png512 = createPNG(512, 99, 102, 241);
+const png512 = createPNG(512);
 fs.writeFileSync(path.join(outDir, 'icon-512.png'), png512);
 console.log('Written public/icon-512.png');

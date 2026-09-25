@@ -62,6 +62,7 @@ export interface AppSettings {
   autoCompleteThreshold: number; // e.g. 0.90 (90%)
   theme: 'light' | 'dark';
   dailyFocusGoalMinutes?: number; // e.g. 60 min
+  firstAccessDate?: string;
 }
 
 export type SortOption = 'recently_watched' | 'recently_added' | 'progress' | 'title';
