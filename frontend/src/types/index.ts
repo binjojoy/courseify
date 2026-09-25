@@ -9,6 +9,13 @@ export interface Course {
   description?: string;
   addedAt: string;
   lastOpenedAt: string;
+  source?: CourseSource;
+}
+
+export interface CourseSource {
+  type: 'playlist' | 'video';
+  id: string;
+  url: string;
 }
 
 export interface VideoItem {
@@ -85,4 +92,20 @@ export interface LearningStats {
   avgHoursPerDay: number;
   dailyMinutesStudied: number;
   weeklyHours: { day: string; hours: number }[];
+}
+
+export interface BackupData {
+  schemaVersion: 3;
+  exportedAt: string;
+  profile: UserProfile;
+  settings: AppSettings;
+  courses: Course[];
+  favorites: FavoriteVideo[];
+  watchActivity: Record<string, number>;
+  accessDays: string[];
+  courseData: Record<string, {
+    videos: VideoItem[];
+    progress: CourseProgress;
+    notes: CourseNotes;
+  }>;
 }

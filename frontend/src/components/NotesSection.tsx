@@ -18,14 +18,22 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving'>('saved');
   const [isEditing, setIsEditing] = useState(false);
   const debounceTimerRef = useRef<any>(null);
+  const textRef = useRef('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Load existing note when video changes
   useEffect(() => {
     const existing = storage.getVideoNote(courseId, videoId);
     setText(existing);
+    textRef.current = existing;
     setIsEditing(!!existing);
     setSaveStatus('saved');
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        storage.saveVideoNote(courseId, videoId, textRef.current);
+      }
+    };
   }, [courseId, videoId]);
 
   // Format seconds to [MM:SS]
@@ -38,6 +46,7 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newText = e.target.value;
     setText(newText);
+    textRef.current = newText;
     setSaveStatus('saving');
 
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
@@ -45,6 +54,12 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
       storage.saveVideoNote(courseId, videoId, newText);
       setSaveStatus('saved');
     }, 500);
+  };
+
+  const flushNote = () => {
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    storage.saveVideoNote(courseId, videoId, textRef.current);
+    setSaveStatus('saved');
   };
 
   const handleInsertTimestamp = () => {
@@ -144,6 +159,7 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
             rows={4}
             value={text}
             onChange={handleChange}
+            onBlur={flushNote}
             placeholder="Type your personal observations, memory pointers, or questions..."
             className="w-full p-4 bg-transparent text-text-primary text-sm resize-y outline-none leading-relaxed placeholder:text-text-muted font-body"
           />
@@ -160,7 +176,7 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
             </button>
 
             <span className="text-xs text-text-muted hidden sm:inline font-mono">
-              Markdown &amp; clickable timestamps enabled
+              Clickable timestamps enabled
             </span>
           </div>
         </div>

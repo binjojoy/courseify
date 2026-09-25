@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { storage } from '../services/storage';
 import { UserProfile, AppSettings } from '../types';
+import { ConfirmDialog } from './ConfirmDialog';
 
 interface NavbarProps {
   currentView: string;
@@ -29,6 +30,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [settings, setSettings] = useState<AppSettings>(storage.getSettings());
   const [isAvatarOpen, setIsAvatarOpen] = useState(false);
   const [isCourseMenuOpen, setIsCourseMenuOpen] = useState(false);
+  const [pendingImport, setPendingImport] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const avatarMenuRef = useRef<HTMLDivElement>(null);
   const courseMenuRef = useRef<HTMLDivElement>(null);
@@ -86,12 +88,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     const reader = new FileReader();
     reader.onload = (evt) => {
       const content = evt.target?.result as string;
-      const success = storage.importBackup(content);
-      if (success) {
-        onShowToast('Backup imported successfully.');
-      } else {
-        onShowToast('Failed to import backup: invalid file format.');
-      }
+      setPendingImport(content);
     };
     reader.readAsText(file);
     setIsAvatarOpen(false);
@@ -102,6 +99,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const initialLetter = displayName.trim().charAt(0).toUpperCase() || 'U';
 
   return (
+    <>
     <header className="fixed top-0 left-0 right-0 z-50 h-14 bg-bg-surface/95 dark:bg-[#0F172A]/95 backdrop-blur-md border-b border-border-default dark:border-slate-800">
       <div className={`h-14 ${currentView === 'player' ? 'w-full px-4 sm:px-6' : 'max-w-[1240px] mx-auto px-4 md:px-6 lg:px-8'} flex items-center justify-between`}>
         {/* Left Side: Logo & Navigation */}
@@ -319,5 +317,19 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
       </div>
     </header>
+    <ConfirmDialog
+      isOpen={!!pendingImport}
+      title="Replace local Courseify data?"
+      body="Importing this backup replaces your current courses, progress, notes, favorites, settings, and analytics in this browser."
+      confirmLabel="Replace data"
+      isDestructive
+      onCancel={() => setPendingImport(null)}
+      onConfirm={() => {
+        const success = pendingImport ? storage.importBackup(pendingImport) : false;
+        setPendingImport(null);
+        onShowToast(success ? 'Backup imported successfully.' : 'Failed to import backup: invalid file format.');
+      }}
+    />
+    </>
   );
 };

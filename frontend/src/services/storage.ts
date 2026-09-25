@@ -1,5 +1,6 @@
-import { Course, VideoItem, CourseProgress, CourseNotes, UserProfile, AppSettings, RecentNoteItem, LearningStats, FavoriteVideo } from '../types';
+import { BackupData, Course, VideoItem, CourseProgress, CourseNotes, UserProfile, AppSettings, RecentNoteItem, LearningStats, FavoriteVideo } from '../types';
 import { DEFAULT_PROFILE, DEFAULT_SETTINGS } from './sampleData';
+import { getPlayableVideos } from '../utils/course';
 
 const PREFIX = 'courseify:v1:';
 const ACTIVITY_KEY = `${PREFIX}watch-activity`;
@@ -17,6 +18,11 @@ class StorageService {
 
   constructor() {
     this.init();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('storage', (event) => {
+        if (event.key?.startsWith(PREFIX) || event.key === null) this.triggerUpdate();
+      });
+    }
   }
 
   private init() {
@@ -24,22 +30,6 @@ class StorageService {
     this.hasInitialized = true;
 
     try {
-      const existingCourses = localStorage.getItem(`${PREFIX}courses`);
-      if (existingCourses) {
-        try {
-          const parsed = JSON.parse(existingCourses);
-          if (Array.isArray(parsed) && parsed.some((c: any) => c.id === 'PL_OS_FUNDAMENTALS' || c.id === 'PL_RUST_SCRATCH')) {
-            const cleaned = parsed.filter((c: any) => !['PL_OS_FUNDAMENTALS', 'PL_RUST_SCRATCH', 'PL_ORGANIC_CHEM', 'PL_SPANISH_TRAVEL', 'PL_LINEAR_ALGEBRA', 'PL_TYPE_DESIGN'].includes(c.id));
-            localStorage.setItem(`${PREFIX}courses`, JSON.stringify(cleaned));
-            ['PL_OS_FUNDAMENTALS', 'PL_RUST_SCRATCH', 'PL_ORGANIC_CHEM', 'PL_SPANISH_TRAVEL', 'PL_LINEAR_ALGEBRA', 'PL_TYPE_DESIGN'].forEach(id => {
-              localStorage.removeItem(`${PREFIX}course:${id}:videos`);
-              localStorage.removeItem(`${PREFIX}course:${id}:progress`);
-              localStorage.removeItem(`${PREFIX}course:${id}:notes`);
-            });
-          }
-        } catch {}
-      }
-
       if (!localStorage.getItem(`${PREFIX}profile`)) {
         this.saveProfile(DEFAULT_PROFILE);
       } else {
@@ -140,10 +130,19 @@ class StorageService {
     const courses = this.getCourses();
     const idx = courses.findIndex(c => c.id === course.id);
     if (idx >= 0) {
-      courses[idx] = { ...courses[idx], ...course, lastOpenedAt: new Date().toISOString() };
+      courses[idx] = { ...courses[idx], ...course };
     } else {
       courses.unshift({ ...course, addedAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString() });
     }
+    this.saveCourses(courses);
+  }
+
+  touchCourse(courseId: string): void {
+    const course = this.getCourse(courseId);
+    if (!course) return;
+    const courses = this.getCourses().map(item => item.id === courseId
+      ? { ...item, lastOpenedAt: new Date().toISOString() }
+      : item);
     this.saveCourses(courses);
   }
 
@@ -154,6 +153,8 @@ class StorageService {
       localStorage.removeItem(`${PREFIX}course:${courseId}:videos`);
       localStorage.removeItem(`${PREFIX}course:${courseId}:progress`);
       localStorage.removeItem(`${PREFIX}course:${courseId}:notes`);
+      const favorites = this.getFavorites().filter(favorite => favorite.courseId !== courseId);
+      localStorage.setItem(`${PREFIX}favorites`, JSON.stringify(favorites));
       this.triggerUpdate();
     } catch (e) {
       console.error('Error removing course:', e);
@@ -207,17 +208,25 @@ class StorageService {
     }
   }
 
-  toggleVideoCompletion(courseId: string, videoId: string): { completed: boolean; courseCompleteTriggered: boolean } {
+  private updateCourseCompletion(progress: CourseProgress, videos: VideoItem[]): boolean {
+    const playableVideos = getPlayableVideos(videos);
+    const completedCount = playableVideos.filter(video => progress.videos[video.videoId]?.completed).length;
+    const wasComplete = !!progress.completedAt;
+    const isComplete = playableVideos.length > 0 && completedCount === playableVideos.length;
+    progress.completedAt = isComplete ? (progress.completedAt || new Date().toISOString()) : null;
+    return !wasComplete && isComplete;
+  }
+
+  setVideoCompleted(courseId: string, videoId: string, completed: boolean): { completed: boolean; courseCompleteTriggered: boolean } {
     const progress = this.getCourseProgress(courseId);
     const videos = this.getCourseVideos(courseId);
     const currentStatus = !!progress.videos[videoId]?.completed;
-    const newStatus = !currentStatus;
 
     if (!progress.videos[videoId]) {
-      progress.videos[videoId] = { completed: newStatus, positionSec: 0 };
+      progress.videos[videoId] = { completed, positionSec: 0 };
     } else {
-      progress.videos[videoId].completed = newStatus;
-      if (newStatus) {
+      progress.videos[videoId].completed = completed;
+      if (completed) {
         progress.videos[videoId].completedAt = new Date().toISOString();
       } else {
         progress.videos[videoId].completedAt = null;
@@ -226,21 +235,14 @@ class StorageService {
 
     progress.updatedAt = new Date().toISOString();
 
-    const totalPlayable = videos.filter(v => !v.unavailable).length;
-    const completedCount = videos.filter(v => progress.videos[v.videoId]?.completed && !v.unavailable).length;
-
-    let courseCompleteTriggered = false;
-    if (totalPlayable > 0 && completedCount === totalPlayable) {
-      if (!progress.completedAt) {
-        progress.completedAt = new Date().toISOString();
-        courseCompleteTriggered = true;
-      }
-    } else {
-      progress.completedAt = null;
-    }
-
+    const courseCompleteTriggered = this.updateCourseCompletion(progress, videos);
     this.saveCourseProgress(courseId, progress);
-    return { completed: newStatus, courseCompleteTriggered };
+    return { completed, courseCompleteTriggered };
+  }
+
+  toggleVideoCompletion(courseId: string, videoId: string): { completed: boolean; courseCompleteTriggered: boolean } {
+    const progress = this.getCourseProgress(courseId);
+    return this.setVideoCompleted(courseId, videoId, !progress.videos[videoId]?.completed);
   }
 
   saveVideoPosition(courseId: string, videoId: string, positionSec: number): void {
@@ -252,12 +254,6 @@ class StorageService {
       progress.videos[videoId] = { completed: false, positionSec: Math.floor(positionSec) };
     } else {
       progress.videos[videoId].positionSec = Math.floor(positionSec);
-    }
-
-    const course = this.getCourse(courseId);
-    if (course) {
-      course.lastOpenedAt = new Date().toISOString();
-      this.addOrUpdateCourse(course);
     }
 
     this.saveCourseProgress(courseId, progress);
@@ -372,9 +368,17 @@ class StorageService {
       favs.unshift(fav);
       isNowFav = true;
     }
-    localStorage.setItem(`${PREFIX}favorites`, JSON.stringify(favs));
-    this.triggerUpdate();
+    this.saveFavorites(favs);
     return isNowFav;
+  }
+
+  saveFavorites(favorites: FavoriteVideo[]): void {
+    try {
+      localStorage.setItem(`${PREFIX}favorites`, JSON.stringify(favorites));
+      this.triggerUpdate();
+    } catch (e) {
+      this.handleQuotaError(e);
+    }
   }
 
   // --- Progress Metrics ---
@@ -383,17 +387,18 @@ class StorageService {
     const videos = this.getCourseVideos(courseId);
     const progress = this.getCourseProgress(courseId);
 
-    const totalVideos = videos.length;
-    const completedVideos = videos.filter(v => progress.videos[v.videoId]?.completed).length;
+    const playableVideos = getPlayableVideos(videos);
+    const totalVideos = playableVideos.length;
+    const completedVideos = playableVideos.filter(v => progress.videos[v.videoId]?.completed).length;
     const completionPercent = totalVideos > 0 ? Math.round((completedVideos / totalVideos) * 100) : 0;
 
-    let totalDurationSec = course?.totalDurationSec || 0;
-    if (totalDurationSec === 0 && videos.length > 0) {
-      totalDurationSec = videos.reduce((acc, v) => acc + (v.durationSec || 0), 0);
+    let totalDurationSec = playableVideos.reduce((acc, v) => acc + (v.durationSec || 0), 0);
+    if (totalDurationSec === 0) {
+      totalDurationSec = course?.totalDurationSec || 0;
     }
 
     let watchedDurationSec = 0;
-    for (const v of videos) {
+    for (const v of playableVideos) {
       if (progress.videos[v.videoId]?.completed) {
         watchedDurationSec += v.durationSec || 0;
       } else if (progress.videos[v.videoId]?.positionSec) {
@@ -408,7 +413,7 @@ class StorageService {
       totalDurationSec,
       watchedDurationSec,
       isCompleted: totalVideos > 0 && completedVideos === totalVideos,
-      lastVideoId: progress.lastVideoId || videos[0]?.videoId || ''
+      lastVideoId: progress.lastVideoId && videos.some(v => v.videoId === progress.lastVideoId) ? progress.lastVideoId : playableVideos[0]?.videoId || ''
     };
   }
 
@@ -498,13 +503,15 @@ class StorageService {
 
   // --- Export / Import JSON Backup (ST-5) ---
   exportBackup(): string {
-    const backup: Record<string, any> = {
-      schemaVersion: 2,
+    const backup: BackupData = {
+      schemaVersion: 3,
       exportedAt: new Date().toISOString(),
       profile: this.getProfile(),
       settings: this.getSettings(),
       courses: this.getCourses(),
       favorites: this.getFavorites(),
+      watchActivity: this.getWatchActivity(),
+      accessDays: this.getAccessDays(),
       courseData: {}
     };
 
@@ -519,31 +526,67 @@ class StorageService {
     return JSON.stringify(backup, null, 2);
   }
 
+  private validateBackup(value: unknown): value is BackupData {
+    if (!value || typeof value !== 'object') return false;
+    const backup = value as Partial<BackupData>;
+    if (backup.schemaVersion !== 3 || !Array.isArray(backup.courses) || !Array.isArray(backup.favorites)) return false;
+    if (!backup.profile || typeof backup.profile.name !== 'string') return false;
+    if (!backup.settings || typeof backup.settings !== 'object' || !backup.courseData || typeof backup.courseData !== 'object') return false;
+    if (!backup.watchActivity || typeof backup.watchActivity !== 'object' || !Array.isArray(backup.accessDays)) return false;
+    return backup.courses.every(course => !!course && typeof course.id === 'string' && typeof course.title === 'string')
+      && Object.entries(backup.courseData).every(([id, data]) => id && !!data && Array.isArray(data.videos) && !!data.progress && typeof data.progress === 'object' && !!data.notes && typeof data.notes === 'object');
+  }
+
+  private normalizeBackup(value: unknown): BackupData | null {
+    if (!value || typeof value !== 'object') return null;
+    const raw = value as Partial<Omit<BackupData, 'schemaVersion'>> & { schemaVersion?: number };
+    if (raw.schemaVersion !== 2 && raw.schemaVersion !== 3) return null;
+    return {
+      schemaVersion: 3,
+      exportedAt: raw.exportedAt || new Date().toISOString(),
+      profile: raw.profile as UserProfile,
+      settings: raw.settings as AppSettings,
+      courses: raw.courses || [],
+      favorites: raw.favorites || [],
+      watchActivity: raw.watchActivity || {},
+      accessDays: raw.accessDays || [],
+      courseData: raw.courseData || {}
+    };
+  }
+
   importBackup(jsonString: string): boolean {
+    let parsed: unknown;
     try {
-      const backup = JSON.parse(jsonString);
-      if (!backup || !backup.courses) return false;
+      parsed = JSON.parse(jsonString);
+    } catch {
+      return false;
+    }
+    const backup = this.normalizeBackup(parsed);
+    if (!backup || !this.validateBackup(backup)) return false;
+    const previous = new Map<string, string>();
+    try {
+      Object.keys(localStorage).filter(key => key.startsWith(PREFIX)).forEach(key => {
+        const value = localStorage.getItem(key);
+        if (value !== null) previous.set(key, value);
+      });
 
-      if (backup.profile) this.saveProfile(backup.profile);
-      if (backup.settings) this.saveSettings(backup.settings);
-      if (backup.courses) this.saveCourses(backup.courses);
-      if (backup.favorites) {
-        localStorage.setItem(`${PREFIX}favorites`, JSON.stringify(backup.favorites));
+      Object.keys(localStorage).filter(key => key.startsWith(PREFIX)).forEach(key => localStorage.removeItem(key));
+      localStorage.setItem(`${PREFIX}profile`, JSON.stringify(backup.profile));
+      localStorage.setItem(`${PREFIX}settings`, JSON.stringify(backup.settings));
+      localStorage.setItem(`${PREFIX}courses`, JSON.stringify(backup.courses));
+      localStorage.setItem(`${PREFIX}favorites`, JSON.stringify(backup.favorites));
+      localStorage.setItem(ACTIVITY_KEY, JSON.stringify(backup.watchActivity));
+      localStorage.setItem(ACCESS_DAYS_KEY, JSON.stringify(backup.accessDays));
+      for (const [id, data] of Object.entries(backup.courseData)) {
+        localStorage.setItem(`${PREFIX}course:${id}:videos`, JSON.stringify(data.videos));
+        localStorage.setItem(`${PREFIX}course:${id}:progress`, JSON.stringify(data.progress));
+        localStorage.setItem(`${PREFIX}course:${id}:notes`, JSON.stringify(data.notes));
       }
-
-      if (backup.courseData) {
-        for (const [id, data] of Object.entries<any>(backup.courseData)) {
-          if (data.videos) this.saveCourseVideos(id, data.videos);
-          if (data.progress) this.saveCourseProgress(id, data.progress);
-          if (data.notes) {
-            localStorage.setItem(`${PREFIX}course:${id}:notes`, JSON.stringify(data.notes));
-          }
-        }
-      }
-
       this.triggerUpdate();
       return true;
     } catch (e) {
+      Object.keys(localStorage).filter(key => key.startsWith(PREFIX)).forEach(key => localStorage.removeItem(key));
+      previous.forEach((value, key) => localStorage.setItem(key, value));
       console.error('Import backup failed:', e);
       return false;
     }
@@ -567,9 +610,6 @@ class StorageService {
 
   private handleQuotaError(e: any) {
     console.error('LocalStorage write failed:', e);
-    if (e?.name === 'QuotaExceededError' || e?.code === 22) {
-      alert("Storage is full! Not enough browser storage to save this course. Remove a course and try again.");
-    }
   }
 }
 

@@ -8,11 +8,16 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const configuredFrontendOrigin = process.env.FRONTEND_URL?.replace(/\/$/, '');
+const allowedOrigins = new Set(
+  (process.env.FRONTEND_URL || 'https://youtubecourseify.vercel.app,http://localhost:5173')
+    .split(',')
+    .map(origin => origin.trim().replace(/\/$/, ''))
+    .filter(Boolean)
+);
+const requestCounts = new Map();
 
 function isAllowedOrigin(origin) {
-  if (!origin || origin === configuredFrontendOrigin) return true;
-  return /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin) || origin === 'http://localhost:5173';
+  return !origin || allowedOrigins.has(origin.replace(/\/$/, ''));
 }
 
 app.use(cors({
@@ -24,6 +29,25 @@ app.use(cors({
 }));
 
 app.use(express.json());
+app.use((req, res, next) => {
+  res.setTimeout(30000, () => {
+    if (!res.headersSent) res.status(504).json({ error: 'TIMEOUT', message: 'The request timed out.' });
+  });
+  next();
+});
+
+app.use('/api/playlist', (req, res, next) => {
+  if (req.method !== 'POST' && req.method !== 'GET') return next();
+  const key = req.ip || 'unknown';
+  const now = Date.now();
+  const recent = (requestCounts.get(key) || []).filter(timestamp => now - timestamp < 60000);
+  if (recent.length >= 30) {
+    return res.status(429).json({ error: 'RATE_LIMITED', message: 'Too many playlist requests. Try again shortly.' });
+  }
+  recent.push(now);
+  requestCounts.set(key, recent);
+  next();
+});
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -63,6 +87,9 @@ app.post('/api/playlist', async (req, res) => {
       message: "That doesn't look like a YouTube link. Paste a link like youtube.com/playlist?list=… or a video link."
     });
   }
+  if (url.length > 2048) {
+    return res.status(400).json({ error: 'INVALID_URL', message: 'That URL is too long.' });
+  }
 
   const playlistId = extractPlaylistId(url);
   const videoId = extractVideoId(url);
@@ -78,6 +105,10 @@ app.post('/api/playlist', async (req, res) => {
     return res.json(data);
   } catch (err) {
     console.error('Error fetching playlist:', err.message);
+
+    if (err.name === 'AbortError') {
+      return res.status(504).json({ error: 'TIMEOUT', message: 'YouTube took too long to respond. Try again.' });
+    }
 
     if (err.message === 'NOT_FOUND') {
       return res.status(404).json({
@@ -118,6 +149,9 @@ app.get('/api/playlist', async (req, res) => {
       message: "That doesn't look like a YouTube link. Paste a link like youtube.com/playlist?list=…"
     });
   }
+  if (target.length > 2048) {
+    return res.status(400).json({ error: 'INVALID_URL', message: 'That URL is too long.' });
+  }
 
   const playlistId = extractPlaylistId(target);
   const videoId = extractVideoId(target);
@@ -133,6 +167,10 @@ app.get('/api/playlist', async (req, res) => {
     return res.json(data);
   } catch (err) {
     console.error('Error fetching playlist:', err.message);
+
+    if (err.name === 'AbortError') {
+      return res.status(504).json({ error: 'TIMEOUT', message: 'YouTube took too long to respond. Try again.' });
+    }
 
     if (err.message === 'NOT_FOUND') {
       return res.status(404).json({

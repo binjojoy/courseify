@@ -39,7 +39,17 @@ export const CourseCard: React.FC<CourseCardProps> = ({
   return (
     <div
       onClick={() => onOpen(course.id)}
-      className="group flex flex-col justify-between bg-bg-surface rounded-xl p-3 shadow-sm hover:shadow-md transition-all border border-border-default cursor-pointer relative"
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onOpen(course.id);
+        }
+      }}
+      role="link"
+      tabIndex={0}
+      aria-label={`Open course ${course.title}`}
+      className="group flex flex-col justify-between bg-bg-surface rounded-xl p-3 shadow-sm hover:shadow-md transition-all border border-border-default cursor-pointer relative focus:outline-none focus:ring-2 focus:ring-accent"
     >
       <div className="flex flex-col">
         {/* 16:9 Thumbnail Frame */}

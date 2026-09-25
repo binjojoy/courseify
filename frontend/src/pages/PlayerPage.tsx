@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Course, VideoItem, CourseProgress, CourseNotes, FavoriteVideo } from '../types';
 import { storage } from '../services/storage';
 import { fetchVideoDescription } from '../services/api';
+import { getPlayableVideos } from '../utils/course';
 import { YouTubePlayer } from '../components/YouTubePlayer';
 import { PlaylistSidebar } from '../components/PlaylistSidebar';
 import { NotesSection } from '../components/NotesSection';
@@ -35,6 +36,8 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
   const [activeTabMobile, setActiveTabMobile] = useState<'videos' | 'notes' | 'about'>('videos');
   const [isFav, setIsFav] = useState<boolean>(false);
 
+  const playableVideos = getPlayableVideos(videos);
+
   // Sync state if courseId changes or data updates
   const reloadData = () => {
     const c = storage.getCourse(courseId);
@@ -48,7 +51,9 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
     setNotes(n);
 
     if (!currentVideoId || !v.some(item => item.videoId === currentVideoId)) {
-      setCurrentVideoId(p.lastVideoId || v[0]?.videoId || '');
+      setCurrentVideoId(p.lastVideoId && v.some(item => item.videoId === p.lastVideoId)
+        ? p.lastVideoId
+        : getPlayableVideos(v)[0]?.videoId || '');
     }
   };
 
@@ -75,12 +80,14 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
     }
   }, [currentVideoId, videos, courseId]);
 
-  const currentVideo = videos.find(v => v.videoId === currentVideoId) || videos[0];
-  const currentIndex = videos.findIndex(v => v.videoId === currentVideoId);
-  const isFirstVideo = currentIndex <= 0;
-  const isLastVideo = currentIndex >= videos.length - 1;
+  const currentVideo = videos.find(v => v.videoId === currentVideoId && !v.unavailable) || playableVideos[0];
+  const currentIndex = currentVideo ? videos.findIndex(v => v.videoId === currentVideo.videoId) : -1;
+  const playableIndex = currentVideo ? playableVideos.findIndex(v => v.videoId === currentVideo.videoId) : -1;
+  const isFirstVideo = playableIndex <= 0;
+  const isLastVideo = playableIndex < 0 || playableIndex >= playableVideos.length - 1;
 
-  const currentVideoProgress = progress.videos[currentVideoId];
+  const activeVideoId = currentVideo?.videoId || '';
+  const currentVideoProgress = progress.videos[activeVideoId];
   const isCurrentVideoCompleted = !!currentVideoProgress?.completed;
   const initialPosition = currentVideoProgress?.positionSec || 0;
 
@@ -93,20 +100,34 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
     }
   };
 
+  const handleAutoComplete = (videoId: string) => {
+    const { courseCompleteTriggered } = storage.setVideoCompleted(courseId, videoId, true);
+    setProgress(storage.getCourseProgress(courseId));
+    if (courseCompleteTriggered) setIsCourseCompleteModalOpen(true);
+  };
+
+  const handleSelectVideo = (videoId: string) => {
+    const selected = videos.find(video => video.videoId === videoId && !video.unavailable);
+    if (!selected) return;
+    setCurrentVideoId(selected.videoId);
+    storage.touchCourse(courseId);
+    window.history.replaceState(null, '', `#/course/${courseId}?v=${selected.videoId}`);
+  };
+
   const handleNextVideo = () => {
     if (!isLastVideo) {
-      const nextVid = videos[currentIndex + 1];
+      const nextVid = playableVideos[playableIndex + 1];
       if (nextVid) {
-        setCurrentVideoId(nextVid.videoId);
+        handleSelectVideo(nextVid.videoId);
       }
     }
   };
 
   const handlePrevVideo = () => {
     if (!isFirstVideo) {
-      const prevVid = videos[currentIndex - 1];
+      const prevVid = playableVideos[playableIndex - 1];
       if (prevVid) {
-        setCurrentVideoId(prevVid.videoId);
+        handleSelectVideo(prevVid.videoId);
       }
     }
   };
@@ -124,8 +145,8 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
   const handleRewatch = () => {
     storage.resetCourseProgress(courseId);
     setProgress(storage.getCourseProgress(courseId));
-    if (videos[0]) {
-      setCurrentVideoId(videos[0].videoId);
+    if (playableVideos[0]) {
+      handleSelectVideo(playableVideos[0].videoId);
     }
     setIsCourseCompleteModalOpen(false);
     onShowToast('Course progress reset. Enjoy rewatching!');
@@ -247,14 +268,11 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
                     courseId={course.id}
                     initialPositionSec={initialPosition}
                     autoplayNext={autoplayNext}
+                    autoCompleteThreshold={storage.getSettings().autoCompleteThreshold}
                     onNextVideo={handleNextVideo}
                     onPrevVideo={handlePrevVideo}
                     onTimeUpdate={(cur) => setCurrentTimeSec(cur)}
-                    onAutoComplete={(vid) => {
-                      if (!progress.videos[vid]?.completed) {
-                        handleToggleComplete(vid);
-                      }
-                    }}
+                    onAutoComplete={handleAutoComplete}
                   />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center text-text-muted">
@@ -293,7 +311,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
                 }`}
               >
                 <span>Videos</span>
-                <span className="text-text-muted font-normal">({videos.length})</span>
+                <span className="text-text-muted font-normal">({playableVideos.length})</span>
               </button>
               <button
                 type="button"
@@ -448,14 +466,14 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
                   notes={notes}
                   currentVideoId={currentVideoId}
                   autoplayNext={autoplayNext}
-                  onSelectVideo={(vid) => setCurrentVideoId(vid)}
+                  onSelectVideo={handleSelectVideo}
                   onToggleComplete={handleToggleComplete}
                   onToggleAutoplay={() => {
                     const nextVal = !autoplayNext;
                     setAutoplayNext(nextVal);
                     storage.saveSettings({ ...storage.getSettings(), autoplayNext: nextVal });
                   }}
-                  totalDurationFormatted={course.totalDurationFormatted || formatDurationText(metrics.totalDurationSec)}
+                  totalDurationFormatted={formatDurationText(metrics.totalDurationSec)}
                   watchedDurationFormatted={formatDurationText(metrics.watchedDurationSec)}
                 />
               </div>
@@ -471,14 +489,14 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
             notes={notes}
             currentVideoId={currentVideoId}
             autoplayNext={autoplayNext}
-            onSelectVideo={(vid) => setCurrentVideoId(vid)}
+            onSelectVideo={handleSelectVideo}
             onToggleComplete={handleToggleComplete}
             onToggleAutoplay={() => {
               const nextVal = !autoplayNext;
               setAutoplayNext(nextVal);
               storage.saveSettings({ ...storage.getSettings(), autoplayNext: nextVal });
             }}
-            totalDurationFormatted={course.totalDurationFormatted || formatDurationText(metrics.totalDurationSec)}
+            totalDurationFormatted={formatDurationText(metrics.totalDurationSec)}
             watchedDurationFormatted={formatDurationText(metrics.watchedDurationSec)}
           />
         </div>

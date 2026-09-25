@@ -28,6 +28,12 @@ export const ContinueLearningBanner: React.FC<ContinueLearningBannerProps> = ({
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  const formatDuration = (sec: number) => {
+    const hours = Math.floor(sec / 3600);
+    const minutes = Math.floor((sec % 3600) / 60);
+    return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+  };
+
   const videoFraction = Math.min(100, Math.round((positionSec / Math.max(1, videoDurationSec)) * 100));
 
   return (
@@ -95,7 +101,7 @@ export const ContinueLearningBanner: React.FC<ContinueLearningBannerProps> = ({
 
             <div className="pt-1 flex items-center justify-between">
               <span className="font-caption text-caption text-text-muted">
-                Total course duration: {course.totalDurationFormatted || '18h 45m'}
+                Total course duration: {formatDuration(metrics.totalDurationSec)}
               </span>
               <button
                 type="button"

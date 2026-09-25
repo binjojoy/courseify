@@ -13,6 +13,7 @@ interface YouTubePlayerProps {
   courseId: string;
   initialPositionSec?: number;
   autoplayNext?: boolean;
+  autoCompleteThreshold?: number;
   onEnded?: () => void;
   onNextVideo?: () => void;
   onPrevVideo?: () => void;
@@ -25,6 +26,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   courseId,
   initialPositionSec = 0,
   autoplayNext = true,
+  autoCompleteThreshold = 0.9,
   onEnded,
   onNextVideo,
   onPrevVideo,
@@ -61,6 +63,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   const autoCompleteTriggeredRef = useRef(false);
   const isPlayingRef = useRef(false);
   const lastSampleTimeRef = useRef<number | null>(null);
+  const lastPersistedAtRef = useRef(0);
 
   // Load YouTube Iframe API Script
   useEffect(() => {
@@ -135,7 +138,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
             modestbranding: 1,
             rel: 0,
             controls: 0,
-            disablekb: 1,
+            disablekb: 0,
             iv_load_policy: 3,
             fs: 0,
             cc_load_policy: 0,
@@ -269,7 +272,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
             if (onTimeUpdate) onTimeUpdate(cur, dur);
 
             // Auto-complete at >= 90%
-            if (dur > 0 && cur / dur >= 0.90 && onAutoComplete && !autoCompleteTriggeredRef.current) {
+            if (dur > 0 && cur / dur >= autoCompleteThreshold && onAutoComplete && !autoCompleteTriggeredRef.current) {
               autoCompleteTriggeredRef.current = true;
               onAutoComplete(videoId);
             }
@@ -282,8 +285,11 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
             }
             lastSampleTimeRef.current = isPlayingRef.current ? cur : null;
 
-            // Save resume position independently from watch-time accounting.
-            storage.saveVideoPosition(courseId, videoId, cur);
+            // Keep UI updates frequent, but persist resume position every five seconds.
+            if (isPlayingRef.current && cur - lastPersistedAtRef.current >= 5) {
+              storage.saveVideoPosition(courseId, videoId, cur);
+              lastPersistedAtRef.current = cur;
+            }
           }
         } catch {}
       }
@@ -389,6 +395,16 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     setHoverPercent(percent * 100);
     setHoverTime(percent * duration);
+  };
+
+  const handleTimelineKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!duration) return;
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') return;
+    e.preventDefault();
+    const current = playerRef.current?.getCurrentTime?.() || currentTime;
+    const target = e.key === 'Home' ? 0 : e.key === 'End' ? duration : current + (e.key === 'ArrowRight' ? 5 : -5);
+    playerRef.current?.seekTo?.(Math.max(0, Math.min(duration, target)), true);
+    setCurrentTime(Math.max(0, Math.min(duration, target)));
   };
 
   const rewind10 = useCallback(() => {
@@ -604,7 +620,14 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
               onClick={handleSeekChange}
               onMouseMove={handleTimelineHover}
               onMouseLeave={() => setHoverTime(null)}
-              className="relative w-full group/timeline flex items-center cursor-pointer py-1.5"
+              onKeyDown={handleTimelineKeyDown}
+              role="slider"
+              tabIndex={0}
+              aria-label="Video progress"
+              aria-valuemin={0}
+              aria-valuemax={Math.floor(duration)}
+              aria-valuenow={Math.floor(currentTime)}
+              className="relative w-full group/timeline flex items-center cursor-pointer py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400 rounded"
             >
               <div className="w-full h-[3px] group-hover/timeline:h-[5px] bg-white/20 rounded-full overflow-visible relative transition-all duration-150">
                 {/* Buffered track */}

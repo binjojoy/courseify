@@ -8,6 +8,8 @@ import { PlayerPage } from './pages/PlayerPage';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { NamePromptModal } from './components/NamePromptModal';
 import { Toast } from './components/Toast';
+import { fetchPlaylist } from './services/api';
+import { getPlayableVideos } from './utils/course';
 
 import { PrivacyPage } from './pages/PrivacyPage';
 import { TermsPage } from './pages/TermsPage';
@@ -16,7 +18,7 @@ import { NotFoundPage } from './pages/NotFoundPage';
 type ViewMode = 'home' | 'dashboard' | 'player' | 'privacy' | 'terms' | 'notfound';
 
 export const App: React.FC = () => {
-  // Always start on create course page ('home' / '#/add') by default
+  // Route selection is resolved after persisted courses are available.
   const [currentView, setCurrentView] = useState<ViewMode>('home');
   const [activeCourseId, setActiveCourseId] = useState<string>('');
   const [activeVideoId, setActiveVideoId] = useState<string | undefined>(undefined);
@@ -34,11 +36,14 @@ export const App: React.FC = () => {
     const rawHash = window.location.hash;
     const hash = rawHash.replace(/^#\/?/, '');
 
-    if (!hash || hash === 'add' || hash === 'home' || hash === 'import') {
-      // Default / root page is create course page ('#/add')
-      if (window.location.hash !== '#/add') {
-        window.location.hash = '#/add';
-      }
+    if (!hash) {
+      const nextHash = storage.getCourses().length > 0 ? '#/dashboard' : '#/add';
+      window.history.replaceState(null, '', nextHash);
+      setCurrentView(nextHash === '#/dashboard' ? 'dashboard' : 'home');
+      return;
+    }
+
+    if (hash === 'add' || hash === 'home' || hash === 'import') {
       setCurrentView('home');
       return;
     }
@@ -55,8 +60,14 @@ export const App: React.FC = () => {
         return;
       }
 
+      const videos = storage.getCourseVideos(courseId);
+      const fallback = storage.getCourseProgress(courseId).lastVideoId || getPlayableVideos(videos)[0]?.videoId;
+      const selectedVideoId = videoId && videos.some(video => video.videoId === videoId && !video.unavailable) ? videoId : fallback;
       setActiveCourseId(courseId);
-      setActiveVideoId(videoId);
+      setActiveVideoId(selectedVideoId);
+      if (selectedVideoId && selectedVideoId !== videoId) {
+        window.history.replaceState(null, '', `#/course/${courseId}?v=${selectedVideoId}`);
+      }
       setCurrentView('player');
     } else if (hash === 'dashboard') {
       setCurrentView('dashboard');
@@ -87,7 +98,8 @@ export const App: React.FC = () => {
     if (view === 'player' && courseId) {
       setActiveCourseId(courseId);
       setActiveVideoId(videoId);
-      window.location.hash = `#/course/${courseId}${videoId ? `?v=${videoId}` : ''}`;
+      const route = `#/course/${courseId}${videoId ? `?v=${videoId}` : ''}`;
+      window.location.hash = route;
     } else if (view === 'dashboard') {
       window.location.hash = '#/dashboard';
     } else if (view === 'home') {
@@ -96,6 +108,33 @@ export const App: React.FC = () => {
       window.location.hash = '#/privacy';
     } else if (view === 'terms') {
       window.location.hash = '#/terms';
+    }
+  };
+
+  const handleRefreshPlaylist = async () => {
+    if (!activeCourse?.source?.url) {
+      showToast('This course has no saved source URL to refresh.');
+      return;
+    }
+    try {
+      const refreshed = await fetchPlaylist(activeCourse.source.url);
+      const oldVideos = storage.getCourseVideos(activeCourse.id);
+      const refreshedIds = new Set(refreshed.videos.map(video => video.videoId));
+      const removed = oldVideos
+        .filter(video => !refreshedIds.has(video.videoId))
+        .map(video => ({ ...video, unavailable: true }));
+      storage.addOrUpdateCourse({
+        ...refreshed.course,
+        id: activeCourse.id,
+        videoCount: getPlayableVideos(refreshed.videos).length,
+        addedAt: activeCourse.addedAt,
+        lastOpenedAt: new Date().toISOString(),
+        source: activeCourse.source
+      });
+      storage.saveCourseVideos(activeCourse.id, [...refreshed.videos, ...removed]);
+      showToast('Playlist refreshed successfully.');
+    } catch (error: any) {
+      showToast(error?.message || 'Could not refresh this playlist.');
     }
   };
 
@@ -128,6 +167,7 @@ export const App: React.FC = () => {
     const videosToRestore = storage.getCourseVideos(courseToRestore.id);
     const progressToRestore = storage.getCourseProgress(courseToRestore.id);
     const notesToRestore = storage.getCourseNotes(courseToRestore.id);
+    const favoritesToRestore = storage.getFavorites().filter(favorite => favorite.courseId === courseToRestore.id);
 
     // Remove from storage
     storage.removeCourse(courseToRestore.id);
@@ -153,6 +193,7 @@ export const App: React.FC = () => {
         if (notesToRestore && Object.keys(notesToRestore).length > 0) {
           storage.saveCourseNotes(courseToRestore.id, notesToRestore);
         }
+        storage.saveFavorites([...storage.getFavorites().filter(favorite => favorite.courseId !== courseToRestore.id), ...favoritesToRestore]);
         showToast(`Course "${courseToRestore.title}" restored!`);
         // Trigger re-render by refreshing view or dispatching event
         window.dispatchEvent(new Event('storage'));
@@ -175,9 +216,7 @@ export const App: React.FC = () => {
           const c = storage.getCourse(cId);
           if (c) setRemoveTargetCourse(c);
         }}
-        onRefreshPlaylist={() => {
-          showToast('Playlist is synced with YouTube.');
-        }}
+        onRefreshPlaylist={handleRefreshPlaylist}
         onOpenClearData={() => setIsClearDataOpen(true)}
         onShowToast={showToast}
       />
@@ -229,6 +268,7 @@ export const App: React.FC = () => {
         body={`All completed videos and resume positions for "${resetTargetCourse?.title || ''}" will be cleared. Your notes are kept.`}
         confirmLabel="Reset progress"
         isDestructive={true}
+        icon="restart_alt"
         onConfirm={handleConfirmReset}
         onCancel={() => setResetTargetCourse(null)}
       />

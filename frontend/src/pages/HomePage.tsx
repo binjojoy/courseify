@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
-import { fetchPlaylist, ApiError } from '../services/api';
+import { fetchPlaylist, ApiError, getYouTubeSource } from '../services/api';
+import { getCourseSourceKey } from '../utils/course';
 import { storage } from '../services/storage';
 
 interface HomePageProps {
@@ -29,8 +30,16 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
     setFetchProgress("Connecting to YouTube…");
 
     // Check if duplicate course already exists
+    const source = getYouTubeSource(val);
+    if (!source) {
+      setErrorMessage('Enter a valid YouTube playlist or video URL.');
+      setIsLoading(false);
+      setFetchProgress(null);
+      return;
+    }
+
     const existingCourses = storage.getCourses();
-    const matchExisting = existingCourses.find(c => val.includes(c.id));
+    const matchExisting = existingCourses.find(c => getCourseSourceKey(c) === `${source.type}:${source.id}` || c.id === source.id || c.id === `video_${source.id}`);
 
     if (matchExisting) {
       setDuplicateMessage("This playlist is already in your courses. Opening it now.");
@@ -43,7 +52,10 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
 
     try {
       setFetchProgress("Fetching playlist metadata and lessons…");
-      const { course, videos } = await fetchPlaylist(val);
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+      const { course, videos } = await fetchPlaylist(val, controller.signal);
+      if (controller.signal.aborted) return;
 
       // Save course and its videos
       storage.addOrUpdateCourse(course);
@@ -55,11 +67,16 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
     } catch (err: any) {
       setIsLoading(false);
       setFetchProgress(null);
-      if (err instanceof ApiError) {
+      if (err instanceof ApiError && err.code !== 'CANCELLED') {
         setErrorMessage(err.message);
-      } else {
+      } else if (err.code !== 'CANCELLED') {
         setErrorMessage(err.message || "Couldn't reach YouTube. Check your connection and try again.");
       }
+    }
+    finally {
+      abortControllerRef.current = null;
+      setIsLoading(false);
+      setFetchProgress(null);
     }
   };
 
