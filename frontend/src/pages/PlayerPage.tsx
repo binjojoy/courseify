@@ -7,6 +7,7 @@ import { YouTubePlayer } from '../components/YouTubePlayer';
 import { PlaylistSidebar } from '../components/PlaylistSidebar';
 import { NotesSection } from '../components/NotesSection';
 import { CourseCompleteModal } from '../components/CourseCompleteModal';
+import { AISessionNotes } from '../components/AISessionNotes';
 
 interface PlayerPageProps {
   courseId: string;
@@ -33,7 +34,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
   const [currentTimeSec, setCurrentTimeSec] = useState<number>(0);
   const [autoplayNext, setAutoplayNext] = useState<boolean>(storage.getSettings().autoplayNext);
   const [isCourseCompleteModalOpen, setIsCourseCompleteModalOpen] = useState(false);
-  const [activeTabMobile, setActiveTabMobile] = useState<'videos' | 'notes' | 'about'>('videos');
+  const [activeTabMobile, setActiveTabMobile] = useState<'videos' | 'notes' | 'ai' | 'flashcards'>('videos');
   const [isFav, setIsFav] = useState<boolean>(false);
 
   const playableVideos = getPlayableVideos(videos);
@@ -62,6 +63,12 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
     const unsub = storage.subscribe(reloadData);
     return unsub;
   }, [courseId]);
+
+  useEffect(() => {
+    if (initialVideoId && initialVideoId !== currentVideoId && videos.some(video => video.videoId === initialVideoId && !video.unavailable)) {
+      setCurrentVideoId(initialVideoId);
+    }
+  }, [initialVideoId, currentVideoId, videos]);
 
   // Check and fetch description dynamically if missing
   useEffect(() => {
@@ -141,6 +148,17 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
       );
     }
   };
+
+  useEffect(() => {
+    const toggleFullscreen = () => {
+      const player = document.querySelector('.courseify-player') as HTMLElement | null;
+      if (!player) return;
+      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+      else player.requestFullscreen?.().catch(() => {});
+    };
+    document.addEventListener('courseify:toggle-fullscreen', toggleFullscreen);
+    return () => document.removeEventListener('courseify:toggle-fullscreen', toggleFullscreen);
+  }, []);
 
   const handleRewatch = () => {
     storage.resetCourseProgress(courseId);
@@ -259,7 +277,8 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
         {/* Main Column: Player and Content Stage */}
         <div className="flex-1 flex flex-col h-full overflow-y-auto overflow-x-hidden">
           {/* Video Player Viewport Container with Margin & Spacing */}
-          <div className="w-full bg-bg-canvas flex justify-center px-3 py-6 sm:px-4 md:px-6">
+          <div className="sticky top-0 z-40 w-full bg-bg-canvas lg:static">
+          <div className="w-full bg-bg-canvas flex justify-center px-0 py-0 sm:px-4 lg:px-6 lg:py-6">
             <section className="relative w-full max-w-[1280px] aspect-video bg-player-black select-none shrink-0 overflow-hidden">
               <div className="relative w-full h-full overflow-hidden bg-black courseify-player">
                 {currentVideo ? (
@@ -284,7 +303,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
           </div>
 
           {/* Mobile Tab Strip (Only on screens < 1024px) */}
-          <div className="lg:hidden flex flex-col bg-bg-surface border-b border-border-default sticky top-0 z-30">
+          <div className="lg:hidden flex flex-col bg-bg-surface border-b border-border-default">
             {/* Progress strip */}
             <div className="h-11 px-4 flex items-center justify-between text-xs border-b border-border-default">
               <span className="font-semibold text-text-primary">
@@ -300,10 +319,12 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
             </div>
 
             {/* Tabs */}
-            <div className="flex items-center justify-around h-11">
+            <div role="tablist" aria-label="Course workspace" className="flex items-center justify-around h-11">
               <button
                 type="button"
                 onClick={() => setActiveTabMobile('videos')}
+                role="tab"
+                aria-selected={activeTabMobile === 'videos'}
                 className={`flex-1 h-full font-semibold text-xs transition-colors flex items-center justify-center gap-1.5 border-b-2 ${
                   activeTabMobile === 'videos'
                     ? 'border-accent text-accent'
@@ -316,6 +337,8 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveTabMobile('notes')}
+                role="tab"
+                aria-selected={activeTabMobile === 'notes'}
                 className={`flex-1 h-full font-semibold text-xs transition-colors flex items-center justify-center gap-1.5 border-b-2 ${
                   activeTabMobile === 'notes'
                     ? 'border-accent text-accent'
@@ -326,16 +349,24 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => setActiveTabMobile('about')}
-                className={`flex-1 h-full font-semibold text-xs transition-colors flex items-center justify-center gap-1.5 border-b-2 ${
-                  activeTabMobile === 'about'
-                    ? 'border-accent text-accent'
-                    : 'border-transparent text-text-secondary hover:text-text-primary'
-                }`}
+                onClick={() => setActiveTabMobile('ai')}
+                aria-selected={activeTabMobile === 'ai'}
+                role="tab"
+                className={`flex-1 h-full font-semibold text-xs transition-colors flex items-center justify-center gap-1.5 border-b-2 ${activeTabMobile === 'ai' ? 'border-accent text-accent' : 'border-transparent text-text-secondary hover:text-text-primary'}`}
               >
-                <span>About</span>
+                <span>AI Notes</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTabMobile('flashcards')}
+                aria-selected={activeTabMobile === 'flashcards'}
+                role="tab"
+                className={`flex-1 h-full font-semibold text-xs transition-colors flex items-center justify-center gap-1.5 border-b-2 ${activeTabMobile === 'flashcards' ? 'border-accent text-accent' : 'border-transparent text-text-secondary hover:text-text-primary'}`}
+              >
+                <span>Flashcards</span>
               </button>
             </div>
+          </div>
           </div>
 
           {/* Desktop Content Stage or Active Mobile Tab Content */}
@@ -423,7 +454,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
             {/* Mobile Tab Conditionals or Desktop Default view */}
             <div className="lg:block">
               {/* Description Block */}
-              <div className={`pt-6 border-t border-border-default flex flex-col ${activeTabMobile !== 'about' ? 'hidden lg:flex' : 'flex'}`}>
+              <div className="hidden lg:flex pt-6 border-t border-border-default flex-col">
                 <div
                   id="descContent"
                   className={`text-sm text-text-secondary leading-relaxed transition-all whitespace-pre-line ${
@@ -456,6 +487,17 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
                     onSeek={handleSeek}
                   />
                 )}
+              </div>
+
+              <div className={`${activeTabMobile !== 'ai' && activeTabMobile !== 'flashcards' ? 'hidden lg:block' : 'block'}`}>
+                {currentVideo && <AISessionNotes
+                  courseId={course.id}
+                  video={currentVideo}
+                  onSeek={handleSeek}
+                  onOpenKeySettings={() => window.dispatchEvent(new Event('courseify:open-gemini-settings'))}
+                  onShowToast={onShowToast}
+                  initialTab={activeTabMobile === 'flashcards' ? 'flashcards' : 'summary'}
+                />}
               </div>
 
               {/* Mobile Videos Tab Content */}

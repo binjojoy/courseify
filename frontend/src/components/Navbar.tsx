@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { storage } from '../services/storage';
 import { UserProfile, AppSettings } from '../types';
 import { ConfirmDialog } from './ConfirmDialog';
+import { KeyRound, Search } from 'lucide-react';
 
 interface NavbarProps {
   currentView: string;
@@ -13,6 +14,8 @@ interface NavbarProps {
   onRefreshPlaylist?: () => void;
   onShowToast: (msg: string) => void;
   onOpenClearData: () => void;
+  onOpenGeminiSettings: () => void;
+  onOpenCommandPalette: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -24,7 +27,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenRemoveCourse,
   onRefreshPlaylist,
   onShowToast,
-  onOpenClearData
+  onOpenClearData,
+  onOpenGeminiSettings,
+  onOpenCommandPalette
 }) => {
   const [profile, setProfile] = useState<UserProfile>(storage.getProfile());
   const [settings, setSettings] = useState<AppSettings>(storage.getSettings());
@@ -219,6 +224,27 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
             </div>
           )}
+
+          {/* Theme Toggle Button */}
+          <button
+            onClick={onOpenCommandPalette}
+            aria-label="Search lessons and commands"
+            title="Search lessons and commands (Ctrl+K)"
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors focus:outline-none"
+            type="button"
+          >
+            <Search size={19} />
+          </button>
+
+          <button
+            onClick={onOpenGeminiSettings}
+            aria-label="Configure Gemini API key"
+            title="Gemini AI settings"
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors focus:outline-none"
+            type="button"
+          >
+            <KeyRound size={19} />
+          </button>
 
           {/* Theme Toggle Button */}
           <button

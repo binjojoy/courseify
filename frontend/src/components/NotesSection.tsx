@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { storage } from '../services/storage';
+import { Copy, Download } from 'lucide-react';
 
 interface NotesSectionProps {
   courseId: string;
@@ -64,7 +65,7 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
 
   const handleInsertTimestamp = () => {
     const timeFormatted = formatTime(currentPlayTimeSec);
-    const insertStr = ` [${timeFormatted}] `;
+    const insertStr = ` [${timeFormatted}](#timestamp-${Math.floor(currentPlayTimeSec)}) `;
     const textarea = textareaRef.current;
     if (!textarea) return;
 
@@ -83,14 +84,30 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
     }, 0);
   };
 
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {}
+  };
+
+  const handleExport = () => {
+    const blob = new Blob([`# Lesson notes\n\n${text}`], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `courseify-notes-${videoId}.md`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   // Convert timestamp tags e.g. [12:34] into clickable seeking triggers
   const renderRenderedNote = () => {
     if (!text) return null;
-    const parts = text.split(/(\[\d{1,2}:\d{2}(?::\d{2})?\])/g);
+    const parts = text.split(/(\[\d{1,2}:\d{2}(?::\d{2})?\](?:\(#[^)]+\))?)/g);
     return (
       <div className="text-sm text-text-primary leading-relaxed whitespace-pre-wrap">
         {parts.map((part, i) => {
-          const match = part.match(/^\[(\d{1,2}):(\d{2})(?::(\d{2}))?\]$/);
+          const match = part.match(/^\[(\d{1,2}):(\d{2})(?::(\d{2}))?\](?:\(#timestamp-\d+\))?$/);
           if (match) {
             const h = match[3] ? parseInt(match[1], 10) : 0;
             const m = match[3] ? parseInt(match[2], 10) : parseInt(match[1], 10);
@@ -103,7 +120,7 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
                 onClick={() => onSeek(totalSec)}
                 className="inline-flex items-center px-1.5 py-0.5 rounded bg-accent-subtle text-accent hover:underline font-mono text-xs font-medium cursor-pointer"
               >
-                {part}
+                {part.match(/^\[([^\]]+)/)?.[1] || part}
               </button>
             );
           }
@@ -180,6 +197,10 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
             <span className="text-xs text-text-muted hidden sm:inline font-mono">
               Clickable timestamps enabled
             </span>
+            <div className="flex items-center gap-1">
+              <button type="button" onClick={handleCopy} aria-label="Copy lesson notes" title="Copy notes" className="flex h-8 w-8 items-center justify-center rounded text-text-muted hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"><Copy size={15} /></button>
+              <button type="button" onClick={handleExport} aria-label="Export notes as Markdown" title="Export Markdown" className="flex h-8 w-8 items-center justify-center rounded text-text-muted hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"><Download size={15} /></button>
+            </div>
           </div>
         </div>
       )}
