@@ -2,7 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { storage } from '../services/storage';
 import { UserProfile, AppSettings } from '../types';
 import { ConfirmDialog } from './ConfirmDialog';
-import { KeyRound, Search } from 'lucide-react';
+import { KeyRound, Search, Sparkles } from 'lucide-react';
+import { GeminiUsage, getGeminiApiKey, getGeminiUsage } from '../services/ai';
 
 interface NavbarProps {
   currentView: string;
@@ -36,6 +37,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [isAvatarOpen, setIsAvatarOpen] = useState(false);
   const [isCourseMenuOpen, setIsCourseMenuOpen] = useState(false);
   const [pendingImport, setPendingImport] = useState<string | null>(null);
+  const [hasGeminiKey, setHasGeminiKey] = useState(() => !!getGeminiApiKey());
+  const [geminiUsage, setGeminiUsage] = useState<GeminiUsage>(() => getGeminiUsage());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const avatarMenuRef = useRef<HTMLDivElement>(null);
   const courseMenuRef = useRef<HTMLDivElement>(null);
@@ -46,6 +49,19 @@ export const Navbar: React.FC<NavbarProps> = ({
       setSettings(storage.getSettings());
     });
     return unsub;
+  }, []);
+
+  useEffect(() => {
+    const refreshAiStatus = () => {
+      setHasGeminiKey(!!getGeminiApiKey());
+      setGeminiUsage(getGeminiUsage());
+    };
+    window.addEventListener('courseify:gemini-key-changed', refreshAiStatus);
+    window.addEventListener('courseify:gemini-usage-updated', refreshAiStatus);
+    return () => {
+      window.removeEventListener('courseify:gemini-key-changed', refreshAiStatus);
+      window.removeEventListener('courseify:gemini-usage-updated', refreshAiStatus);
+    };
   }, []);
 
   // Close dropdowns on outside click
@@ -238,12 +254,18 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           <button
             onClick={onOpenGeminiSettings}
-            aria-label="Configure Gemini API key"
-            title="Gemini AI settings"
+            aria-label={`${hasGeminiKey ? 'Update' : 'Configure'} Gemini API key. ${geminiUsage.totalTokens.toLocaleString()} tokens used by this key in this browser; remaining Google quota is not available here.`}
+            title={`This browser: ${geminiUsage.totalTokens.toLocaleString()} tokens across ${geminiUsage.requestCount} request${geminiUsage.requestCount === 1 ? '' : 's'}. Google does not expose remaining quota here.`}
             className="w-9 h-9 flex items-center justify-center rounded-lg text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors focus:outline-none"
             type="button"
           >
-            <KeyRound size={19} />
+            <span className="relative flex h-8 w-8 items-center justify-center text-accent">
+              <svg className="absolute inset-0 -rotate-90" viewBox="0 0 36 36" aria-hidden="true">
+                <circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" strokeOpacity="0.2" strokeWidth="2.5" />
+                <circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeDasharray={`${2 * Math.PI * 15}`} strokeDashoffset={`${2 * Math.PI * 15 * (1 - Math.min(geminiUsage.totalTokens / 100000, 1))}`} />
+              </svg>
+              {hasGeminiKey ? <Sparkles size={14} aria-hidden="true" /> : <KeyRound size={14} aria-hidden="true" />}
+            </span>
           </button>
 
           {/* Theme Toggle Button */}

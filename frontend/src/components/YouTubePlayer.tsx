@@ -101,12 +101,26 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     return () => document.removeEventListener('fullscreenchange', handleFsChange);
   }, []);
 
+  useEffect(() => {
+    const handleSeekRequest = (event: Event) => {
+      const seconds = (event as CustomEvent<number>).detail;
+      if (!Number.isFinite(seconds) || !playerRef.current) return;
+      try {
+        playerRef.current.seekTo(seconds, true);
+        setCurrentTime(seconds);
+      } catch {}
+    };
+    window.addEventListener('courseify:seek-player', handleSeekRequest);
+    return () => window.removeEventListener('courseify:seek-player', handleSeekRequest);
+  }, []);
+
   // Initialize or update YouTube Player
   useEffect(() => {
     let isMounted = true;
     setHasError(false);
     setIsLoading(true);
     autoCompleteTriggeredRef.current = false;
+    lastPersistedAtRef.current = initialPositionSec || 0;
 
     const initPlayer = () => {
       if (!containerRef.current || !window.YT || !window.YT.Player) return;
@@ -309,8 +323,9 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   // Keyboard shortcuts
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable || target?.closest('button, a, [role="tab"], [role="checkbox"], [role="option"], [role="slider"], [role="dialog"]')) return;
 
       switch (e.key) {
         case ' ':
@@ -352,7 +367,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [isPlaying, volume, isMuted, ccEnabled]);
+  }, [isPlaying, volume, isMuted, ccEnabled, duration]);
 
   // Controls auto-hide on inactivity
   const handleMouseMove = () => {

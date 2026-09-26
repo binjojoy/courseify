@@ -30,6 +30,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
   const [currentVideoId, setCurrentVideoId] = useState<string>(
     initialVideoId || progress.lastVideoId || videos[0]?.videoId || ''
   );
+  const routeVideoIdRef = useRef(initialVideoId);
   const [isDescExpanded, setIsDescExpanded] = useState(false);
   const [currentTimeSec, setCurrentTimeSec] = useState<number>(0);
   const [autoplayNext, setAutoplayNext] = useState<boolean>(storage.getSettings().autoplayNext);
@@ -65,10 +66,12 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
   }, [courseId]);
 
   useEffect(() => {
-    if (initialVideoId && initialVideoId !== currentVideoId && videos.some(video => video.videoId === initialVideoId && !video.unavailable)) {
+    if (initialVideoId === routeVideoIdRef.current) return;
+    routeVideoIdRef.current = initialVideoId;
+    if (initialVideoId && videos.some(video => video.videoId === initialVideoId && !video.unavailable)) {
       setCurrentVideoId(initialVideoId);
     }
-  }, [initialVideoId, currentVideoId, videos]);
+  }, [initialVideoId, videos]);
 
   // Check and fetch description dynamically if missing
   useEffect(() => {
@@ -77,13 +80,16 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
 
     const current = videos.find(v => v.videoId === currentVideoId);
     if (current && (!current.description || current.description.trim() === '')) {
-      fetchVideoDescription(currentVideoId).then(desc => {
-        if (desc) {
-          const updated = videos.map(v => v.videoId === currentVideoId ? { ...v, description: desc } : v);
-          setVideos(updated);
+      const controller = new AbortController();
+      fetchVideoDescription(currentVideoId, controller.signal).then(desc => {
+        if (!desc || controller.signal.aborted) return;
+        setVideos(currentVideos => {
+          const updated = currentVideos.map(video => video.videoId === currentVideoId ? { ...video, description: desc } : video);
           storage.saveCourseVideos(courseId, updated);
-        }
+          return updated;
+        });
       }).catch(() => {});
+      return () => controller.abort();
     }
   }, [currentVideoId, videos, courseId]);
 
@@ -117,6 +123,8 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
     const selected = videos.find(video => video.videoId === videoId && !video.unavailable);
     if (!selected) return;
     setCurrentVideoId(selected.videoId);
+    setCurrentTimeSec(storage.getCourseProgress(courseId).videos[videoId]?.positionSec || 0);
+    setIsDescExpanded(false);
     storage.touchCourse(courseId);
     window.history.replaceState(null, '', `#/course/${courseId}?v=${selected.videoId}`);
   };
@@ -140,13 +148,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
   };
 
   const handleSeek = (sec: number) => {
-    const iframe = document.querySelector('iframe');
-    if (iframe && iframe.contentWindow) {
-      iframe.contentWindow.postMessage(
-        JSON.stringify({ event: 'command', func: 'seekTo', args: [sec, true] }),
-        '*'
-      );
-    }
+    window.dispatchEvent(new CustomEvent('courseify:seek-player', { detail: sec }));
   };
 
   useEffect(() => {
@@ -283,6 +285,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
               <div className="relative w-full h-full overflow-hidden bg-black courseify-player">
                 {currentVideo ? (
                   <YouTubePlayer
+                    key={`${course.id}:${currentVideo.videoId}`}
                     videoId={currentVideo.videoId}
                     courseId={course.id}
                     initialPositionSec={initialPosition}
