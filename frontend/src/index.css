@@ -78,16 +78,26 @@ button, a, input, textarea, select {
 }
 
 #root {
-  animation: pageEnter 0.35s ease-out both;
+  animation: rootEnter 0.35s ease-out both;
 }
 
 .page-transition {
-  animation: pageEnter 0.28s ease-out both;
+  animation: pageFadeIn 0.28s ease-out both;
 }
 
-@keyframes pageEnter {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
+@keyframes rootEnter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes pageFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+:where(button, a, input, textarea, select, [tabindex="0"]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* Material symbols font icon settings */

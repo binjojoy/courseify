@@ -277,7 +277,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
     <main className="w-full pt-14 bg-bg-canvas min-h-screen text-text-primary selection:bg-accent-subtle selection:text-accent" data-testid="course-player">
       <div className="flex flex-col lg:flex-row w-full h-[calc(100vh-56px)] overflow-hidden bg-bg-canvas text-text-primary">
         {/* Main Column: Player and Content Stage */}
-        <div className="flex-1 flex flex-col h-full overflow-y-auto overflow-x-hidden">
+        <div data-testid="player-scroll-area" className="flex-1 flex flex-col h-full overflow-y-auto overflow-x-hidden">
           {/* Video Player Viewport Container with Margin & Spacing */}
           <div className="sticky top-0 z-40 w-full bg-bg-canvas lg:static">
           <div className="w-full bg-bg-canvas flex justify-center px-0 py-0 sm:px-4 lg:px-6 lg:py-6">

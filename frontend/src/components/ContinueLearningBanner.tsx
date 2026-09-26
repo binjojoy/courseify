@@ -54,7 +54,7 @@ export const ContinueLearningBanner: React.FC<ContinueLearningBannerProps> = ({
           </div>
 
           {/* Integrated progress indicator track */}
-          <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/20">
+          <div role="progressbar" aria-label={`${course.title} lesson progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={videoFraction} aria-valuetext={`${videoFraction}% of this lesson watched`} className="absolute bottom-0 left-0 right-0 h-1 bg-white/20">
             <div
               className="h-full bg-accent transition-all duration-300"
               style={{ width: `${videoFraction}%` }}
@@ -92,7 +92,7 @@ export const ContinueLearningBanner: React.FC<ContinueLearningBannerProps> = ({
               </span>
             </div>
 
-            <div className="w-full h-1.5 bg-surface-container rounded-full overflow-hidden">
+            <div role="progressbar" aria-label={`${course.title} course completion`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={metrics.completionPercent} aria-valuetext={`${metrics.completionPercent}% complete`} className="w-full h-1.5 bg-surface-container rounded-full overflow-hidden">
               <div
                 className="h-full bg-accent rounded-full transition-all duration-500"
                 style={{ width: `${metrics.completionPercent}%` }}

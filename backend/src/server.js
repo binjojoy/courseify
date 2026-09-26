@@ -3,17 +3,15 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { getPlaylistData, extractPlaylistId, extractVideoId, fetchVideoDescription } from './services/youtube.js';
 import { SAMPLE_COURSES } from './data/sampleCourses.js';
+import { loadBackendConfig } from './config/env.js';
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
-const allowedOrigins = new Set(
-  (process.env.FRONTEND_URL || 'https://youtubecourseify.vercel.app,http://localhost:5173')
-    .split(',')
-    .map(origin => origin.trim().replace(/\/$/, ''))
-    .filter(Boolean)
-);
+const { port: PORT, frontendUrls, youtubeApiKey } = loadBackendConfig();
+if (youtubeApiKey) process.env.YOUTUBE_API_KEY = youtubeApiKey;
+else delete process.env.YOUTUBE_API_KEY;
+const allowedOrigins = new Set(frontendUrls);
 const requestCounts = new Map();
 
 function isAllowedOrigin(origin) {

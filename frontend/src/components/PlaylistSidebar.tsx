@@ -76,25 +76,6 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
     }
   };
 
-  // Keyboard navigation
-  const handleKeyDown = (e: React.KeyboardEvent, index: number, videoId: string) => {
-    if (e.key === ' ' || e.key === 'Spacebar') {
-      e.preventDefault();
-      onToggleComplete(videoId);
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      onSelectVideo(videoId);
-    } else if (e.key === 'ArrowDown' && index < videos.length - 1) {
-      e.preventDefault();
-      const nextEl = document.getElementById(`playlist-item-${index + 1}`);
-      nextEl?.focus();
-    } else if (e.key === 'ArrowUp' && index > 0) {
-      e.preventDefault();
-      const prevEl = document.getElementById(`playlist-item-${index - 1}`);
-      prevEl?.focus();
-    }
-  };
-
   const filteredVideos = hideCompleted
     ? videos.filter(v => !progress.videos[v.videoId]?.completed || v.videoId === currentVideoId)
     : videos;
@@ -124,7 +105,7 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
         </div>
 
         {/* Progress Bar */}
-        <div className="w-full h-1.5 bg-border-default dark:bg-[#1E293B] rounded-full overflow-hidden">
+        <div role="progressbar" aria-label="Course completion" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={`${completedCount} of ${totalCount} lessons completed`} className="w-full h-1.5 bg-border-default dark:bg-[#1E293B] rounded-full overflow-hidden">
           <div
             className={`h-full rounded-full transition-all duration-300 ${isAllCompleted ? 'bg-success' : 'bg-accent'}`}
             style={{ width: `${percent}%` }}
@@ -180,19 +161,34 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
               key={video.videoId}
               data-testid="lesson-item"
               aria-current={isCurrent ? 'true' : undefined}
+              role="group"
+              aria-label={video.title}
               id={`playlist-item-${idx}`}
               ref={isCurrent ? currentItemRef : undefined}
-              tabIndex={0}
-              onKeyDown={(e) => handleKeyDown(e, idx, video.videoId)}
-              onClick={() => !video.unavailable && onSelectVideo(video.videoId)}
-              className={`min-h-[3.75rem] py-2.5 px-3 rounded-lg flex items-center justify-between transition-colors cursor-pointer group focus:outline-none focus:ring-2 focus:ring-accent ${
+              className={`min-h-[3.75rem] py-2.5 px-3 rounded-lg flex items-center justify-between transition-colors group ${
                 isCurrent
                   ? 'bg-accent-subtle/80 dark:bg-[#1E293B]/90 border-l-4 border-accent shadow-sm'
                   : 'hover:bg-bg-hover'
               }`}
             >
               {/* Left Column: Index or Playing Indicator */}
-              <div className="flex items-center gap-3 min-w-0 pl-0.5">
+              <button
+                type="button"
+                disabled={video.unavailable}
+                aria-label={`${isCurrent ? 'Currently playing' : 'Play'} lesson ${video.position + 1}: ${video.title}`}
+                onClick={() => onSelectVideo(video.videoId)}
+                onKeyDown={(event) => {
+                  if (event.key === 'ArrowDown' && idx < filteredVideos.length - 1) {
+                    event.preventDefault();
+                    document.getElementById(`playlist-item-${idx + 1}-play`)?.focus();
+                  } else if (event.key === 'ArrowUp' && idx > 0) {
+                    event.preventDefault();
+                    document.getElementById(`playlist-item-${idx - 1}-play`)?.focus();
+                  }
+                }}
+                id={`playlist-item-${idx}-play`}
+                className="flex flex-1 min-w-0 items-center gap-3 pl-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded disabled:cursor-not-allowed disabled:opacity-50"
+              >
                 {isCurrent ? (
                   <div className="w-5 flex items-end justify-center gap-0.5 h-3.5 shrink-0" title="Currently Playing">
                     <span className="w-[2.5px] h-3.5 bg-accent rounded-full animate-pulse"></span>
@@ -228,7 +224,7 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
                     </span>
                   )}
                 </div>
-              </div>
+              </button>
 
               {/* Right Column: Duration & Checkbox */}
               <div className="flex items-center gap-3 shrink-0 ml-2">
@@ -247,7 +243,6 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
                     e.stopPropagation();
                     onToggleComplete(video.videoId);
                   }}
-                  onKeyDown={(e) => e.stopPropagation()}
                   className={`w-5 h-5 rounded flex items-center justify-center cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-30 disabled:cursor-not-allowed ${
                     isCompleted
                       ? 'bg-success text-white'

@@ -42,6 +42,7 @@ test('deep course lesson routes restore the real player structure', async ({ pag
   await expect(page.getByTestId('current-lesson-title')).toHaveText('Second lesson');
   await expect(page.locator('[data-testid="playlist-sidebar"]:visible')).toBeVisible();
   await expect(page.locator('[data-testid="lesson-item"]:visible').nth(1)).toHaveAttribute('aria-current', 'true');
+  await expect(page.getByRole('progressbar', { name: 'Course completion' })).toHaveAttribute('aria-valuenow', '0');
   const notesTab = page.getByRole('tab', { name: 'Notes', exact: true });
   if (await notesTab.isVisible()) await notesTab.click();
   await page.getByRole('button', { name: /click to add note/i }).click();
@@ -54,6 +55,11 @@ test('dashboard exposes seeded course state on mobile', async ({ page }) => {
   await expect(page.getByTestId('dashboard')).toBeVisible();
   await expect(page.getByTestId('course-card')).toContainText('Inspectable Course');
   await expect(page.locator('body')).not.toHaveCSS('overflow-x', 'scroll');
+  for (const width of [375, 768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  }
+  await expect(page.getByRole('progressbar', { name: 'Inspectable Course completion' }).first()).toBeVisible();
 });
 
 test('command palette navigates lessons and Gemini key settings persist locally', async ({ page }) => {
@@ -121,7 +127,11 @@ test('course workspace stays within mobile, tablet, and desktop widths', async (
     await page.setViewportSize({ width, height: 900 });
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     if (width === 375) {
-      await expect(page.locator('[data-testid="course-player"] .sticky').first()).toHaveCSS('position', 'sticky');
+      const stickyWorkspace = page.locator('[data-testid="course-player"] .sticky').first();
+      await expect(stickyWorkspace).toHaveCSS('position', 'sticky');
+      await expect(stickyWorkspace).toHaveCSS('top', '0px');
+      await page.getByTestId('player-scroll-area').evaluate(element => element.scrollTop = 250);
+      await expect.poll(async () => (await stickyWorkspace.boundingBox())?.y ?? -1).toBe(56);
     }
   }
 });
@@ -208,6 +218,7 @@ test('selecting a lesson initializes the YouTube player with its video id', asyn
   await expect.poll(() => page.evaluate(() => (window as any).__ytLoadedIds)).toContain('def12345678');
   await page.evaluate(() => window.dispatchEvent(new CustomEvent('courseify:seek-player', { detail: 42 })));
   await expect.poll(() => page.evaluate(() => (window as any).__ytSeekLog)).toContain(42);
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.keyboard.press('k');
   await expect.poll(() => page.evaluate(() => (window as any).__ytPlayCalls)).toBe(1);
   const workspaceNotesTab = page.getByRole('tablist', { name: 'Course workspace' }).getByRole('tab', { name: 'Notes', exact: true });

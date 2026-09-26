@@ -37,7 +37,7 @@ export const CourseCard: React.FC<CourseCardProps> = ({
   const isUnstarted = metrics.completedVideos === 0 && (!metrics.lastVideoId || metrics.watchedDurationSec === 0);
 
   return (
-    <div
+    <article
       onClick={() => onOpen(course.id)}
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return;
@@ -46,11 +46,11 @@ export const CourseCard: React.FC<CourseCardProps> = ({
           onOpen(course.id);
         }
       }}
-      role="link"
-      tabIndex={0}
-      aria-label={`Open course ${course.title}`}
       data-testid="course-card"
-      className="group flex flex-col justify-between bg-bg-surface rounded-xl p-3 shadow-sm hover:shadow-md transition-all border border-border-default cursor-pointer relative focus:outline-none focus:ring-2 focus:ring-accent"
+      aria-label={`Course ${course.title}`}
+      tabIndex={0}
+      role="group"
+      className="group flex flex-col justify-between bg-bg-surface rounded-xl p-3 shadow-sm hover:shadow-md transition-all border border-border-default relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
     >
       <div className="flex flex-col">
         {/* 16:9 Thumbnail Frame */}
@@ -74,7 +74,7 @@ export const CourseCard: React.FC<CourseCardProps> = ({
           )}
 
           {/* Bottom Thumbnail Progress Bar */}
-          <div className="absolute bottom-0 left-0 right-0 h-1 bg-surface-container-highest">
+          <div role="progressbar" aria-label={`${course.title} completion`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={metrics.completionPercent} aria-valuetext={`${metrics.completionPercent}% complete`} className="absolute bottom-0 left-0 right-0 h-1 bg-surface-container-highest">
             <div
               className={`h-full ${isCompleted ? 'bg-success' : 'bg-accent'}`}
               style={{ width: `${metrics.completionPercent}%` }}
@@ -162,7 +162,7 @@ export const CourseCard: React.FC<CourseCardProps> = ({
           </div>
 
           {/* Progress Bar */}
-          <div className="w-full h-1 bg-surface-container rounded-full overflow-hidden mt-2">
+          <div role="progressbar" aria-label={`${course.title} completion`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={metrics.completionPercent} aria-valuetext={`${metrics.completionPercent}% complete`} className="w-full h-1 bg-surface-container rounded-full overflow-hidden mt-2">
             <div
               className={`h-full ${isCompleted ? 'bg-success' : 'bg-accent'}`}
               style={{ width: `${metrics.completionPercent}%` }}
@@ -229,6 +229,6 @@ export const CourseCard: React.FC<CourseCardProps> = ({
           </button>
         )}
       </div>
-    </div>
+    </article>
   );
 };

@@ -64,6 +64,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   const isPlayingRef = useRef(false);
   const lastSampleTimeRef = useRef<number | null>(null);
   const lastPersistedAtRef = useRef(0);
+  const pendingWatchTimeRef = useRef(0);
 
   // Load YouTube Iframe API Script
   useEffect(() => {
@@ -77,7 +78,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
 
   // Save position on window unload
   useEffect(() => {
-    const handleUnload = () => {
+    const saveCurrentPosition = () => {
       if (playerRef.current && typeof playerRef.current.getCurrentTime === 'function') {
         const time = playerRef.current.getCurrentTime();
         if (time > 0) {
@@ -85,10 +86,25 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
         }
       }
     };
-    window.addEventListener('beforeunload', handleUnload);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        saveCurrentPosition();
+        if (pendingWatchTimeRef.current > 0) {
+          storage.recordWatchTime(pendingWatchTimeRef.current);
+          pendingWatchTimeRef.current = 0;
+        }
+      }
+    };
+    window.addEventListener('beforeunload', saveCurrentPosition);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
-      window.removeEventListener('beforeunload', handleUnload);
-      handleUnload();
+      window.removeEventListener('beforeunload', saveCurrentPosition);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      saveCurrentPosition();
+      if (pendingWatchTimeRef.current > 0) {
+        storage.recordWatchTime(pendingWatchTimeRef.current);
+        pendingWatchTimeRef.current = 0;
+      }
     };
   }, [courseId, videoId]);
 
@@ -205,12 +221,20 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
                 lastSampleTimeRef.current = null;
                 const time = event.target.getCurrentTime();
                 storage.saveVideoPosition(courseId, videoId, time);
+                if (pendingWatchTimeRef.current > 0) {
+                  storage.recordWatchTime(pendingWatchTimeRef.current);
+                  pendingWatchTimeRef.current = 0;
+                }
               } else if (event.data === window.YT.PlayerState.ENDED) {
                 setIsPlaying(false);
                 isPlayingRef.current = false;
                 lastSampleTimeRef.current = null;
                 const time = event.target.getDuration();
                 storage.saveVideoPosition(courseId, videoId, time);
+                if (pendingWatchTimeRef.current > 0) {
+                  storage.recordWatchTime(pendingWatchTimeRef.current);
+                  pendingWatchTimeRef.current = 0;
+                }
                 if (onAutoComplete) onAutoComplete(videoId);
                 if (onEnded) onEnded();
                 if (autoplayNext && onNextVideo) {
@@ -295,7 +319,11 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
             if (isPlayingRef.current && lastSampleTimeRef.current !== null) {
               const watchedDelta = cur - lastSampleTimeRef.current;
               if (watchedDelta > 0 && watchedDelta <= 2) {
-                storage.recordWatchTime(watchedDelta);
+                pendingWatchTimeRef.current += watchedDelta;
+                if (pendingWatchTimeRef.current >= 3) {
+                  storage.recordWatchTime(pendingWatchTimeRef.current);
+                  pendingWatchTimeRef.current = 0;
+                }
               }
             }
             lastSampleTimeRef.current = isPlayingRef.current ? cur : null;
