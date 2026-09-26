@@ -3,6 +3,7 @@ import { DEFAULT_PROFILE, DEFAULT_SETTINGS } from './sampleData';
 import { getPlayableVideos } from '../utils/course';
 
 const PREFIX = 'courseify:v1:';
+const GEMINI_API_KEY = 'courseify:gemini-api-key';
 const ACTIVITY_KEY = `${PREFIX}watch-activity`;
 const ACCESS_DAYS_KEY = `${PREFIX}access-days`;
 
@@ -496,6 +497,7 @@ class StorageService {
     Object.keys(localStorage)
       .filter(key => key.startsWith(PREFIX))
       .forEach(key => localStorage.removeItem(key));
+    localStorage.removeItem(GEMINI_API_KEY);
     this.hasInitialized = false;
     this.init();
     this.triggerUpdate();

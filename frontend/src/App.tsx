@@ -15,6 +15,8 @@ import { PrivacyPage } from './pages/PrivacyPage';
 import { TermsPage } from './pages/TermsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { AuditPage } from './pages/AuditPage';
+import { GeminiKeyModal } from './components/GeminiKeyModal';
+import { CommandPalette } from './components/CommandPalette';
 
 type ViewMode = 'home' | 'dashboard' | 'player' | 'privacy' | 'terms' | 'notfound' | 'audit';
 
@@ -29,6 +31,8 @@ export const App: React.FC = () => {
   const [removeTargetCourse, setRemoveTargetCourse] = useState<Course | null>(null);
   const [isClearDataOpen, setIsClearDataOpen] = useState(false);
   const [isNamePromptOpen, setIsNamePromptOpen] = useState(false);
+  const [isGeminiKeyModalOpen, setIsGeminiKeyModalOpen] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastUndoAction, setToastUndoAction] = useState<{ label: string; onUndo: () => void; durationMs?: number } | null>(null);
 
@@ -98,7 +102,12 @@ export const App: React.FC = () => {
 
     parseRoute();
     window.addEventListener('hashchange', parseRoute);
-    return () => window.removeEventListener('hashchange', parseRoute);
+    const openGeminiSettings = () => setIsGeminiKeyModalOpen(true);
+    window.addEventListener('courseify:open-gemini-settings', openGeminiSettings);
+    return () => {
+      window.removeEventListener('hashchange', parseRoute);
+      window.removeEventListener('courseify:open-gemini-settings', openGeminiSettings);
+    };
   }, []);
 
   const navigateTo = (view: ViewMode, courseId?: string, videoId?: string) => {
@@ -210,6 +219,13 @@ export const App: React.FC = () => {
 
   const activeCourse = activeCourseId ? storage.getCourse(activeCourseId) : null;
 
+  const toggleTheme = () => {
+    const settings = storage.getSettings();
+    const theme = settings.theme === 'dark' ? 'light' : 'dark';
+    storage.saveSettings({ ...settings, theme });
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-bg-canvas text-text-primary">
       {/* Global Navigation Bar */}
@@ -225,6 +241,8 @@ export const App: React.FC = () => {
         }}
         onRefreshPlaylist={handleRefreshPlaylist}
         onOpenClearData={() => setIsClearDataOpen(true)}
+        onOpenGeminiSettings={() => setIsGeminiKeyModalOpen(true)}
+        onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
         onShowToast={showToast}
       />
 
@@ -330,6 +348,28 @@ export const App: React.FC = () => {
           setToastUndoAction(null);
         }}
       />
+      <GeminiKeyModal
+        isOpen={isGeminiKeyModalOpen}
+        onClose={() => setIsGeminiKeyModalOpen(false)}
+        onShowToast={showToast}
+      />
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        courses={storage.getCourses()}
+        onNavigate={(courseId, videoId) => navigateTo('player', courseId, videoId)}
+        onOpenGeminiSettings={() => setIsGeminiKeyModalOpen(true)}
+        onToggleTheme={toggleTheme}
+      />
+      <CommandPaletteOpener onOpen={() => setIsCommandPaletteOpen(true)} />
     </div>
   );
+};
+
+const CommandPaletteOpener: React.FC<{ onOpen: () => void }> = ({ onOpen }) => {
+  useEffect(() => {
+    window.addEventListener('courseify:open-command-palette', onOpen);
+    return () => window.removeEventListener('courseify:open-command-palette', onOpen);
+  }, [onOpen]);
+  return null;
 };
