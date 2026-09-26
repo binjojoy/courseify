@@ -2,7 +2,7 @@ import { VideoItem } from '../types';
 
 const API_KEY_STORAGE = 'courseify:gemini-api-key';
 const USAGE_STORAGE = 'courseify:gemini-usage';
-const MODEL = 'gemini-3.8-flash';
+const MODEL = 'gemini-3.6-flash';
 
 export interface GeminiUsage {
   requestCount: number;

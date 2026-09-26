@@ -114,7 +114,7 @@ test('command palette navigates lessons and Gemini key settings persist locally'
   await expect(savedKeyDialog.getByRole('status')).toContainText('Gemini replied: Hello');
   await expect(page.getByRole('button', { name: /12 tokens used by this key/ })).toBeVisible();
   await expect.poll(() => page.evaluate(() => (window as any).__geminiTestHeader)).toBe('AIzaSyCourseifyTestKey');
-  await expect.poll(() => page.evaluate(() => (window as any).__geminiTestUrl)).toContain('gemini-3.8-flash');
+  await expect.poll(() => page.evaluate(() => (window as any).__geminiTestUrl)).toContain('gemini-3.6-flash');
   await savedKeyDialog.getByRole('textbox', { name: 'API key' }).fill('bad-key');
   await savedKeyDialog.getByRole('button', { name: 'Test key' }).click();
   await expect(savedKeyDialog.getByRole('alert')).toContainText('API key not valid.');
