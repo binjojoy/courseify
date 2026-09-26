@@ -1,6 +1,25 @@
 import { parseISODuration, formatTime, formatDurationHuman } from '../utils/duration.js';
 import { SAMPLE_COURSES } from '../data/sampleCourses.js';
 
+const MAX_COURSE_VIDEOS = 200;
+const YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtube-nocookie.com', 'www.youtube-nocookie.com']);
+const PLAYLIST_CACHE_TTL_MS = 10 * 60 * 1000;
+const PLAYLIST_CACHE_MAX_ENTRIES = 100;
+const playlistCache = new Map();
+const playlistRequests = new Map();
+
+function clonePlaylistResponse(data) {
+  return structuredClone(data);
+}
+
+function cachePlaylistResponse(key, data) {
+  playlistCache.delete(key);
+  playlistCache.set(key, { expiresAt: Date.now() + PLAYLIST_CACHE_TTL_MS, data: clonePlaylistResponse(data) });
+  while (playlistCache.size > PLAYLIST_CACHE_MAX_ENTRIES) {
+    playlistCache.delete(playlistCache.keys().next().value);
+  }
+}
+
 /**
  * In-memory LRU cache for fetched video descriptions to avoid repeated requests
  */
@@ -46,8 +65,12 @@ export function extractPlaylistId(input) {
 
   try {
     const urlObj = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`);
+    const hostname = urlObj.hostname.toLowerCase();
+    if (!YOUTUBE_HOSTS.has(hostname) && hostname !== 'youtu.be' && hostname !== 'www.youtu.be') return null;
     const listParam = urlObj.searchParams.get('list');
     if (listParam) return listParam;
+    const channelId = urlObj.pathname.match(/^\/channel\/(UC[a-zA-Z0-9_-]{22})(?:\/videos)?\/?$/);
+    if (YOUTUBE_HOSTS.has(hostname) && channelId) return `UU${channelId[1].slice(2)}`;
   } catch (e) {
     // Regex fallback
     const listMatch = trimmed.match(/[?&]list=([a-zA-Z0-9_-]+)/);
@@ -73,15 +96,21 @@ export function extractVideoId(input) {
 
   try {
     const urlObj = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`);
-    if (urlObj.hostname.includes('youtu.be')) {
+    const hostname = urlObj.hostname.toLowerCase();
+    if (hostname === 'youtu.be' || hostname === 'www.youtu.be') {
       const vid = urlObj.pathname.replace(/^\//, '');
       if (/^[a-zA-Z0-9_-]{11}$/.test(vid)) return vid;
     }
-    const vParam = urlObj.searchParams.get('v');
-    if (vParam && /^[a-zA-Z0-9_-]{11}$/.test(vParam)) return vParam;
+    if (YOUTUBE_HOSTS.has(hostname)) {
+      const vParam = urlObj.searchParams.get('v');
+      if (vParam && /^[a-zA-Z0-9_-]{11}$/.test(vParam)) return vParam;
+      const pathVideo = urlObj.pathname.match(/^\/(?:embed|shorts|live)\/([a-zA-Z0-9_-]{11})(?:\/|$)/);
+      if (pathVideo) return pathVideo[1];
+    }
+    return null;
   } catch (e) {}
 
-  const match = trimmed.match(/(?:v=|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/);
+  const match = trimmed.match(/(?:v=|youtu\.be\/|(?:embed|shorts|live)\/)([a-zA-Z0-9_-]{11})/);
   if (match) return match[1];
 
   if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
@@ -159,6 +188,7 @@ async function scrapeSingleVideo(videoId) {
   }
 
   const html = await response.text();
+  const playerResponseMatch = html.match(/ytInitialPlayerResponse\s*=\s*({.+?});/s);
   const match = html.match(/ytInitialData\s*=\s*({.+?});<\/script>/s) || html.match(/var ytInitialData\s*=\s*({.+?});/);
   
   let title = 'YouTube Video';
@@ -198,6 +228,17 @@ async function scrapeSingleVideo(videoId) {
         description = secondaryInfo.attributedDescription.content;
       }
     } catch (e) {}
+  }
+
+  if (playerResponseMatch) {
+    try {
+      const playerResponse = JSON.parse(playerResponseMatch[1]);
+      const details = playerResponse.videoDetails;
+      if (details?.title) title = details.title;
+      if (details?.author) channelTitle = details.author;
+      if (!description && details?.shortDescription) description = details.shortDescription;
+      durationSec = Number.parseInt(details?.lengthSeconds || '0', 10) || 0;
+    } catch {}
   }
 
   // Fallback title regex
@@ -275,15 +316,22 @@ async function fetchViaYouTubeAPI(playlistId, apiKey) {
   let allVideoItems = [];
   let nextPageToken = '';
   do {
-    const itemsUrl = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&maxResults=50&playlistId=${playlistId}&key=${apiKey}${nextPageToken ? `&pageToken=${nextPageToken}` : ''}`;
+    const pageSize = Math.min(50, MAX_COURSE_VIDEOS - allVideoItems.length);
+    const params = new URLSearchParams({ part: 'snippet,contentDetails', maxResults: String(pageSize), playlistId, key: apiKey });
+    if (nextPageToken) params.set('pageToken', nextPageToken);
+    const itemsUrl = `https://www.googleapis.com/youtube/v3/playlistItems?${params}`;
     const itemsRes = await fetchWithTimeout(itemsUrl);
-    if (!itemsRes.ok) break;
+    if (!itemsRes.ok) {
+      const body = await itemsRes.json().catch(() => ({}));
+      if (body?.error?.errors?.[0]?.reason === 'quotaExceeded') throw new Error('QUOTA_EXCEEDED');
+      throw new Error('API_FAILURE');
+    }
     const itemsData = await itemsRes.json();
     if (itemsData.items) {
-      allVideoItems.push(...itemsData.items);
+      allVideoItems.push(...itemsData.items.slice(0, pageSize));
     }
     nextPageToken = itemsData.nextPageToken;
-  } while (nextPageToken);
+  } while (nextPageToken && allVideoItems.length < MAX_COURSE_VIDEOS);
 
   if (allVideoItems.length === 0) {
     throw new Error('EMPTY_PLAYLIST');
@@ -297,7 +345,8 @@ async function fetchViaYouTubeAPI(playlistId, apiKey) {
   const durationMap = {};
   for (let i = 0; i < videoIds.length; i += 50) {
     const batch = videoIds.slice(i, i + 50);
-    const vUrl = `https://www.googleapis.com/youtube/v3/videos?part=contentDetails,snippet&id=${batch.join(',')}&key=${apiKey}`;
+    const params = new URLSearchParams({ part: 'contentDetails,snippet,status', id: batch.join(','), key: apiKey });
+    const vUrl = `https://www.googleapis.com/youtube/v3/videos?${params}`;
     const vRes = await fetchWithTimeout(vUrl);
     if (vRes.ok) {
       const vData = await vRes.json();
@@ -307,10 +356,15 @@ async function fetchViaYouTubeAPI(playlistId, apiKey) {
           durationMap[item.id] = {
             durationSec: sec,
             durationFormatted: formatTime(sec),
-            description: item.snippet?.description || ''
+            description: item.snippet?.description || '',
+            embeddable: item.status?.embeddable !== false,
+            privacyStatus: item.status?.privacyStatus || 'public'
           };
         }
       }
+    } else {
+      const body = await vRes.json().catch(() => ({}));
+      if (body?.error?.errors?.[0]?.reason === 'quotaExceeded') throw new Error('QUOTA_EXCEEDED');
     }
   }
 
@@ -322,7 +376,7 @@ async function fetchViaYouTubeAPI(playlistId, apiKey) {
     const vId = item.contentDetails?.videoId || item.snippet?.resourceId?.videoId;
     if (!vId) continue;
     const title = item.snippet?.title || 'Untitled Video';
-    const isUnavailable = title === 'Private video' || title === 'Deleted video' || !durationMap[vId];
+    const isUnavailable = title === 'Private video' || title === 'Deleted video' || !durationMap[vId] || !durationMap[vId].embeddable || durationMap[vId].privacyStatus === 'private';
     const durInfo = durationMap[vId] || { durationSec: 0, durationFormatted: '00:00', description: item.snippet?.description || '' };
 
     if (!isUnavailable) {
@@ -341,7 +395,7 @@ async function fetchViaYouTubeAPI(playlistId, apiKey) {
     });
   }
 
-  course.videoCount = videos.length;
+  course.videoCount = videos.filter(video => !video.unavailable).length;
   course.totalDurationSec = totalDurationSec;
   course.totalDurationFormatted = formatDurationHuman(totalDurationSec);
 
@@ -419,6 +473,7 @@ async function scrapeYouTubePlaylist(playlistId) {
   if (rawItems.length === 0) {
     throw new Error('EMPTY_PLAYLIST');
   }
+  rawItems = rawItems.slice(0, MAX_COURSE_VIDEOS);
 
   let totalDurationSec = 0;
   const videos = [];
@@ -497,7 +552,7 @@ async function scrapeYouTubePlaylist(playlistId) {
     title,
     channelTitle,
     thumbnailUrl: thumbnail || videos[0]?.thumbnailUrl || '',
-    videoCount: videos.length,
+    videoCount: videos.filter(video => !video.unavailable).length,
     totalDurationSec,
     totalDurationFormatted: formatDurationHuman(totalDurationSec),
     description: description.substring(0, 3000),
@@ -513,7 +568,7 @@ async function scrapeYouTubePlaylist(playlistId) {
  * @param {string} inputUrl 
  * @returns {Promise<{ course: object, videos: Array }>}
  */
-export async function getPlaylistData(inputUrl) {
+async function fetchPlaylistData(inputUrl) {
   const playlistId = extractPlaylistId(inputUrl);
 
   if (!playlistId) {
@@ -530,6 +585,7 @@ export async function getPlaylistData(inputUrl) {
       return await fetchViaYouTubeAPI(playlistId, apiKey);
     } catch (err) {
       if (err.message === 'QUOTA_EXCEEDED' || err.message === 'API_FAILURE') {
+        console.warn(JSON.stringify({ event: 'youtube_api_fallback', reason: err.message, playlistId }));
         try {
           return await scrapeYouTubePlaylist(playlistId);
         } catch (scraperErr) {
@@ -541,4 +597,36 @@ export async function getPlaylistData(inputUrl) {
   }
 
   return await scrapeYouTubePlaylist(playlistId);
+}
+
+function getPlaylistCacheKey(inputUrl) {
+  const playlistId = extractPlaylistId(inputUrl);
+  if (playlistId) return `playlist:${playlistId}`;
+  const videoId = extractVideoId(inputUrl);
+  return videoId ? `video:${videoId}` : null;
+}
+
+export async function getPlaylistData(inputUrl) {
+  const key = getPlaylistCacheKey(inputUrl);
+  if (!key) return fetchPlaylistData(inputUrl);
+
+  const cached = playlistCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    playlistCache.delete(key);
+    playlistCache.set(key, cached);
+    return clonePlaylistResponse(cached.data);
+  }
+  if (cached) playlistCache.delete(key);
+
+  const inFlight = playlistRequests.get(key);
+  if (inFlight) return clonePlaylistResponse(await inFlight);
+
+  const request = fetchPlaylistData(inputUrl)
+    .then(data => {
+      cachePlaylistResponse(key, data);
+      return data;
+    })
+    .finally(() => playlistRequests.delete(key));
+  playlistRequests.set(key, request);
+  return clonePlaylistResponse(await request);
 }

@@ -53,12 +53,14 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     debounceTimerRef.current = setTimeout(() => {
       storage.saveVideoNote(courseId, videoId, newText);
+      debounceTimerRef.current = null;
       setSaveStatus('saved');
     }, 500);
   };
 
   const flushNote = () => {
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = null;
     storage.saveVideoNote(courseId, videoId, textRef.current);
     setSaveStatus('saved');
   };
@@ -74,7 +76,10 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
     const currentVal = textarea.value;
     const updated = currentVal.substring(0, start) + insertStr + currentVal.substring(end);
 
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = null;
     setText(updated);
+    textRef.current = updated;
     storage.saveVideoNote(courseId, videoId, updated);
     setSaveStatus('saved');
 

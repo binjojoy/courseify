@@ -99,9 +99,12 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
   const handleCancelQuickAdd = () => {
     quickAddAbortRef.current?.abort();
+    quickAddAbortRef.current = null;
     setIsAdding(false);
     setAddError(null);
   };
+
+  useEffect(() => () => quickAddAbortRef.current?.abort(), []);
 
   const handleSaveGoal = () => {
     setDailyGoalMinutes(tempGoalMinutes);
@@ -199,7 +202,12 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 </div>
                 <button
                   type="button"
-                  onClick={() => setIsQuickAddOpen(false)}
+                  onClick={() => {
+                    quickAddAbortRef.current?.abort();
+                    quickAddAbortRef.current = null;
+                    setIsAdding(false);
+                    setIsQuickAddOpen(false);
+                  }}
                   className="text-text-muted hover:text-text-primary p-1.5 rounded-lg hover:bg-bg-hover transition-colors"
                 >
                   <span className="material-symbols-outlined text-[20px]">close</span>
@@ -378,7 +386,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             {/* 4. Favorites Expandable List Section */}
             {favorites.length > 0 && (
               <section className="mt-12 bg-bg-surface rounded-2xl p-6 border border-border-default shadow-xs">
-                <div className="flex items-center justify-between mb-4 cursor-pointer" onClick={() => setIsFavoritesExpanded(!isFavoritesExpanded)}>
+                  <button type="button" aria-expanded={isFavoritesExpanded} aria-controls="favorites-list" onClick={() => setIsFavoritesExpanded(!isFavoritesExpanded)} className="w-full flex items-center justify-between mb-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
                   <div className="flex items-center gap-2.5">
                     <span className="material-symbols-outlined text-amber-500 text-[22px]" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
                     <h2 className="text-lg font-bold text-text-primary">
@@ -391,15 +399,16 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                       {isFavoritesExpanded ? 'expand_less' : 'expand_more'}
                     </span>
                   </button>
-                </div>
+                  </button>
 
                 {isFavoritesExpanded && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-2 animate-fadeIn">
+                  <div id="favorites-list" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-2 animate-fadeIn">
                     {favorites.map((fav) => (
-                      <div
+                      <button
+                        type="button"
                         key={fav.videoId}
                         onClick={() => onNavigate('player', fav.courseId, fav.videoId)}
-                        className="flex items-center gap-3 p-3 rounded-xl bg-bg-canvas hover:bg-bg-hover transition-colors cursor-pointer border border-border-default/70 group"
+                        className="w-full text-left flex items-center gap-3 p-3 rounded-xl bg-bg-canvas hover:bg-bg-hover transition-colors border border-border-default/70 group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                       >
                         <div className="w-16 h-10 rounded-md overflow-hidden bg-black shrink-0 relative">
                           <img src={fav.thumbnailUrl} alt={fav.title} className="w-full h-full object-cover" />
@@ -415,7 +424,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                         <span className="material-symbols-outlined text-[18px] text-text-muted group-hover:text-accent shrink-0">
                           play_circle
                         </span>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 )}
@@ -445,10 +454,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 ) : (
                   <div className="flex flex-col gap-3.5">
                     {recentNotes.map((note, idx) => (
-                      <article
+                      <button
+                        type="button"
                         key={idx}
                         onClick={() => onNavigate('player', note.courseId, note.videoId)}
-                        className="p-4 rounded-xl bg-bg-canvas hover:bg-bg-hover transition-colors cursor-pointer border border-border-default/60 dark:border-slate-800/80 group"
+                        className="w-full text-left p-4 rounded-xl bg-bg-canvas hover:bg-bg-hover transition-colors border border-border-default/60 dark:border-slate-800/80 group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                       >
                         <p className="text-sm text-text-primary leading-relaxed">
                           “{note.text}”
@@ -461,7 +471,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                             {new Date(note.updatedAt).toLocaleDateString()}
                           </span>
                         </div>
-                      </article>
+                      </button>
                     ))}
                   </div>
                 )}
@@ -547,7 +557,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                       {stats.dailyMinutesStudied} / {dailyGoalMinutes} min ({goalProgressPercent}%)
                     </span>
                   </div>
-                  <div className="w-full h-2 bg-border-default rounded-full overflow-hidden">
+                  <div role="progressbar" aria-label="Daily focus goal" aria-valuemin={0} aria-valuemax={100} aria-valuenow={goalProgressPercent} aria-valuetext={`${stats.dailyMinutesStudied} of ${dailyGoalMinutes} minutes`} className="w-full h-2 bg-border-default rounded-full overflow-hidden">
                     <div
                       className={`h-full rounded-full transition-all duration-300 ${goalProgressPercent >= 100 ? 'bg-emerald-500' : 'bg-accent'}`}
                       style={{ width: `${goalProgressPercent}%` }}

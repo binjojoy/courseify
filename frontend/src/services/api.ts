@@ -21,8 +21,12 @@ export const getYouTubeSource = (input: string): CourseSource | null => {
   if (!value) return null;
   try {
     const url = new URL(value.startsWith('http') ? value : `https://${value}`);
+    const hostname = url.hostname.toLowerCase();
+    const isYoutubeHost = ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtube-nocookie.com', 'www.youtube-nocookie.com'].includes(hostname);
+    const isShortLinkHost = hostname === 'youtu.be' || hostname === 'www.youtu.be';
+    if (!isYoutubeHost && !isShortLinkHost) return null;
     const playlistId = url.searchParams.get('list');
-    const videoId = url.hostname.includes('youtu.be')
+    const videoId = isShortLinkHost
       ? url.pathname.slice(1).split('/')[0]
       : url.searchParams.get('v') || url.pathname.match(/\/(?:embed|shorts)\/([^/]+)/)?.[1];
     if (playlistId && /^[A-Za-z0-9_-]{12,}$/.test(playlistId)) {
@@ -56,16 +60,20 @@ export async function fetchPlaylist(url: string, signal?: AbortSignal): Promise<
     const timeout = window.setTimeout(() => timeoutController.abort(), 30000);
     const abortHandler = () => timeoutController.abort();
     signal?.addEventListener('abort', abortHandler, { once: true });
-    const res = await fetch(`${API_URL}/api/playlist`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ url: trimmed }),
-      signal: timeoutController.signal
-    });
-    window.clearTimeout(timeout);
-    signal?.removeEventListener('abort', abortHandler);
+    let res: Response;
+    try {
+      res = await fetch(`${API_URL}/api/playlist`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ url: trimmed }),
+        signal: timeoutController.signal
+      });
+    } finally {
+      window.clearTimeout(timeout);
+      signal?.removeEventListener('abort', abortHandler);
+    }
 
     const data = await res.json().catch(() => ({}));
 
@@ -99,9 +107,13 @@ export async function fetchVideoDescription(videoId: string, signal?: AbortSigna
     const timeout = window.setTimeout(() => timeoutController.abort(), 15000);
     const abortHandler = () => timeoutController.abort();
     signal?.addEventListener('abort', abortHandler, { once: true });
-    const res = await fetch(`${API_URL}/api/video/${videoId}/description`, { signal: timeoutController.signal });
-    window.clearTimeout(timeout);
-    signal?.removeEventListener('abort', abortHandler);
+    let res: Response;
+    try {
+      res = await fetch(`${API_URL}/api/video/${videoId}/description`, { signal: timeoutController.signal });
+    } finally {
+      window.clearTimeout(timeout);
+      signal?.removeEventListener('abort', abortHandler);
+    }
     if (!res.ok) return '';
     const data = await res.json().catch(() => ({}));
     return data.description || '';

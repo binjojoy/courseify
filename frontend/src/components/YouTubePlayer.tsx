@@ -64,6 +64,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   const isPlayingRef = useRef(false);
   const lastSampleTimeRef = useRef<number | null>(null);
   const lastPersistedAtRef = useRef(0);
+  const pendingWatchTimeRef = useRef(0);
 
   // Load YouTube Iframe API Script
   useEffect(() => {
@@ -77,7 +78,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
 
   // Save position on window unload
   useEffect(() => {
-    const handleUnload = () => {
+    const saveCurrentPosition = () => {
       if (playerRef.current && typeof playerRef.current.getCurrentTime === 'function') {
         const time = playerRef.current.getCurrentTime();
         if (time > 0) {
@@ -85,10 +86,25 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
         }
       }
     };
-    window.addEventListener('beforeunload', handleUnload);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        saveCurrentPosition();
+        if (pendingWatchTimeRef.current > 0) {
+          storage.recordWatchTime(pendingWatchTimeRef.current);
+          pendingWatchTimeRef.current = 0;
+        }
+      }
+    };
+    window.addEventListener('beforeunload', saveCurrentPosition);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
-      window.removeEventListener('beforeunload', handleUnload);
-      handleUnload();
+      window.removeEventListener('beforeunload', saveCurrentPosition);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      saveCurrentPosition();
+      if (pendingWatchTimeRef.current > 0) {
+        storage.recordWatchTime(pendingWatchTimeRef.current);
+        pendingWatchTimeRef.current = 0;
+      }
     };
   }, [courseId, videoId]);
 
@@ -101,12 +117,26 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     return () => document.removeEventListener('fullscreenchange', handleFsChange);
   }, []);
 
+  useEffect(() => {
+    const handleSeekRequest = (event: Event) => {
+      const seconds = (event as CustomEvent<number>).detail;
+      if (!Number.isFinite(seconds) || !playerRef.current) return;
+      try {
+        playerRef.current.seekTo(seconds, true);
+        setCurrentTime(seconds);
+      } catch {}
+    };
+    window.addEventListener('courseify:seek-player', handleSeekRequest);
+    return () => window.removeEventListener('courseify:seek-player', handleSeekRequest);
+  }, []);
+
   // Initialize or update YouTube Player
   useEffect(() => {
     let isMounted = true;
     setHasError(false);
     setIsLoading(true);
     autoCompleteTriggeredRef.current = false;
+    lastPersistedAtRef.current = initialPositionSec || 0;
 
     const initPlayer = () => {
       if (!containerRef.current || !window.YT || !window.YT.Player) return;
@@ -191,12 +221,20 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
                 lastSampleTimeRef.current = null;
                 const time = event.target.getCurrentTime();
                 storage.saveVideoPosition(courseId, videoId, time);
+                if (pendingWatchTimeRef.current > 0) {
+                  storage.recordWatchTime(pendingWatchTimeRef.current);
+                  pendingWatchTimeRef.current = 0;
+                }
               } else if (event.data === window.YT.PlayerState.ENDED) {
                 setIsPlaying(false);
                 isPlayingRef.current = false;
                 lastSampleTimeRef.current = null;
                 const time = event.target.getDuration();
                 storage.saveVideoPosition(courseId, videoId, time);
+                if (pendingWatchTimeRef.current > 0) {
+                  storage.recordWatchTime(pendingWatchTimeRef.current);
+                  pendingWatchTimeRef.current = 0;
+                }
                 if (onAutoComplete) onAutoComplete(videoId);
                 if (onEnded) onEnded();
                 if (autoplayNext && onNextVideo) {
@@ -281,7 +319,11 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
             if (isPlayingRef.current && lastSampleTimeRef.current !== null) {
               const watchedDelta = cur - lastSampleTimeRef.current;
               if (watchedDelta > 0 && watchedDelta <= 2) {
-                storage.recordWatchTime(watchedDelta);
+                pendingWatchTimeRef.current += watchedDelta;
+                if (pendingWatchTimeRef.current >= 3) {
+                  storage.recordWatchTime(pendingWatchTimeRef.current);
+                  pendingWatchTimeRef.current = 0;
+                }
               }
             }
             lastSampleTimeRef.current = isPlayingRef.current ? cur : null;
@@ -309,8 +351,9 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   // Keyboard shortcuts
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable || target?.closest('button, a, [role="tab"], [role="checkbox"], [role="option"], [role="slider"], [role="dialog"]')) return;
 
       switch (e.key) {
         case ' ':
@@ -352,7 +395,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [isPlaying, volume, isMuted, ccEnabled]);
+  }, [isPlaying, volume, isMuted, ccEnabled, duration]);
 
   // Controls auto-hide on inactivity
   const handleMouseMove = () => {
