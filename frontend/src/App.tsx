@@ -120,6 +120,17 @@ export const App: React.FC = () => {
     };
   }, []);
 
+  useEffect(() => {
+    const handleCommandShortcut = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'k' || target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+      event.preventDefault();
+      setIsCommandPaletteOpen(true);
+    };
+    window.addEventListener('keydown', handleCommandShortcut);
+    return () => window.removeEventListener('keydown', handleCommandShortcut);
+  }, []);
+
   const navigateTo = (view: ViewMode, courseId?: string, videoId?: string) => {
     if (view === 'player' && courseId) {
       setActiveCourseId(courseId);
