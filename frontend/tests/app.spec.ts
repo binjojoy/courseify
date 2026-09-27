@@ -466,6 +466,161 @@ test('a Gemini request that cannot succeed is not retried', async ({ page }) => 
   expect(await geminiCalls(page)).toBe(1);
 });
 
+// ---------------------------------------------------------------------------
+// First load
+// ---------------------------------------------------------------------------
+
+/**
+ * Record every distinct status-region text the page ever renders.
+ *
+ * Installed as an init script so it runs before the app's own scripts, then read
+ * after load. That makes it possible to assert a screen which is only on screen
+ * for a few hundred milliseconds was rendered at all, without racing it.
+ *
+ * The text is taken from the mutation's own added nodes rather than by
+ * re-querying the document. The boot skeleton is mounted and unmounted inside a
+ * single task, so by the time an observer callback runs the node is already gone
+ * and a fresh query finds nothing.
+ */
+async function recordStatusTexts(page: Page) {
+  await page.addInitScript(() => {
+    const seen: string[] = [];
+    (window as unknown as { __statusTexts: string[] }).__statusTexts = seen;
+    const take = (node: Element) => {
+      const targets = node.matches('[role="status"]')
+        ? [node]
+        : Array.from(node.querySelectorAll('[role="status"]'));
+      for (const target of targets) {
+        const text = (target.textContent || '').replace(/\s+/g, ' ').trim();
+        if (text && !seen.includes(text)) seen.push(text);
+      }
+    };
+    // Observed on `document`, not `document.documentElement`: an init script runs
+    // before the parser has created the root element, so observing the element
+    // would throw and silently record nothing.
+    new MutationObserver((records) => {
+      for (const record of records) {
+        record.addedNodes.forEach((node) => {
+          if (node.nodeType === 1) take(node as Element);
+        });
+      }
+    }).observe(document, { childList: true, subtree: true });
+  });
+  return () => page.evaluate(() => (window as unknown as { __statusTexts: string[] }).__statusTexts);
+}
+
+/**
+ * Leave nothing on the network but the app's own HTML.
+ *
+ * The bundle and CSS are aborted so the static shell is all that is left, which is
+ * the state a slow first load produces. The Google Fonts stylesheets are aborted
+ * too: they are third-party, render-blocking, and the point of these tests is that
+ * the shell does not need them. Leaving them live made the suite wait on a CDN
+ * that this machine does not reliably reach, which showed up as timeouts that came
+ * and went with the rest of the machine's load.
+ */
+async function isolateShell(page: Page) {
+  const failedUrls: string[] = [];
+  page.on('requestfailed', (request) => failedUrls.push(request.url()));
+  await page.route('**/assets/**', route => route.abort());
+  await page.route('**://fonts.googleapis.com/**', route => route.abort());
+  await page.route('**://fonts.gstatic.com/**', route => route.abort());
+  return failedUrls;
+}
+
+test('the pre-bundle boot shell renders styled with no app CSS loaded', async ({ page }) => {
+  // Reproduces a slow first load: the bundle never arrives, so the static shell
+  // in index.html is all there is. This is the state in which the old shell
+  // painted unstyled and its SVG filled the viewport as a black triangle.
+  const failedUrls = await isolateShell(page);
+  await page.goto('/');
+
+  const shell = page.locator('#app-boot-shell');
+  await expect(shell).toBeVisible();
+
+  // Prove the app stylesheet really is unavailable, so the geometry assertions
+  // below are measuring the shell rather than Tailwind. A failed <link> still
+  // appears in document.styleSheets, so the request log is the honest signal.
+  expect(failedUrls.some((url) => url.includes('/assets/') && url.includes('.css'))).toBe(true);
+
+  // The regression: the mark was w-4 h-4 (16px) and rendered at 769px because the
+  // SVG had a viewBox and no resolved size, so it filled its unconstrained parent.
+  const svg = shell.locator('svg').first();
+  const svgBox = await svg.boundingBox();
+  expect(svgBox!.width).toBeLessThanOrEqual(20);
+  expect(svgBox!.height).toBeLessThanOrEqual(20);
+
+  // The mark itself is a 1.5rem square, not a full-width block.
+  const markBox = await shell.locator('.shell-mark').boundingBox();
+  expect(markBox!.width).toBeLessThanOrEqual(32);
+  expect(markBox!.height).toBeLessThanOrEqual(32);
+
+  // The bar matches the real navbar height, so the hand-off does not jump.
+  const barBox = await shell.locator('.shell-bar').boundingBox();
+  expect(barBox!.height).toBeGreaterThanOrEqual(52);
+  expect(barBox!.height).toBeLessThanOrEqual(60);
+
+  // The video placeholder is 16:9, matching the player frame.
+  const aspect = await page.evaluate(() => {
+    const block = document.querySelector('#app-boot-shell .shell-grid > div > .sk');
+    if (!block) return 0;
+    const rect = block.getBoundingClientRect();
+    return rect.height === 0 ? 0 : rect.width / rect.height;
+  });
+  expect(aspect).toBeGreaterThan(1.7);
+  expect(aspect).toBeLessThan(1.85);
+
+  // It follows the theme, and is never a transparent page with a black glyph.
+  const darkBackground = await shell.evaluate((node) => getComputedStyle(node).backgroundColor);
+  expect(darkBackground).not.toBe('rgba(0, 0, 0, 0)');
+  expect(darkBackground).not.toBe('rgb(255, 255, 255)');
+
+  // No horizontal overflow at the narrowest supported width.
+  await page.setViewportSize({ width: 320, height: 700 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+  await expect(shell).toHaveAttribute('aria-label', 'Loading Courseify');
+  await expect(shell.locator('.shell-status-title')).toHaveText('Loading your library');
+});
+
+test('the boot shell explains itself instead of sitting silent when the bundle is slow', async ({ page }) => {
+  await isolateShell(page);
+  await page.goto('/');
+
+  // The base explanation is on screen from the first paint. The slow-path line is
+  // added to it rather than swapped in for it, so neither assertion below depends
+  // on whether this test reached the page before or after the 5s mark — which on a
+  // loaded machine is a coin flip, and is what made this test flaky.
+  const detail = page.locator('[data-shell-detail]');
+  await expect(detail).toContainText('read from this browser');
+
+  await expect(page.locator('[data-shell-slow]')).toContainText('Still starting up', { timeout: 20_000 });
+
+  // Additive, not destructive: the original explanation is still readable.
+  await expect(page.locator('#app-boot-shell .shell-status-detail')).toHaveCount(2);
+});
+
+test('the app explains what it is loading while it boots', async ({ page }) => {
+  await page.route('**://fonts.googleapis.com/**', route => route.abort());
+  await page.route('**://fonts.gstatic.com/**', route => route.abort());
+  const statusTexts = await recordStatusTexts(page);
+  // Not the default `load`: that blocks on the YouTube IFrame API and the font CDN,
+  // which is most of this test's runtime and none of what it asserts. The wait for
+  // the boot sequence is below, where it belongs.
+  await page.goto('/#/dashboard', { waitUntil: 'domcontentloaded' });
+
+  // The React skeleton only exists for a moment, so this reads what was rendered
+  // rather than what is on screen now. Matched on the React copy specifically: the
+  // static shell uses similar wording, and this is the test that proves the
+  // in-app skeleton explains itself rather than the shell.
+  await expect
+    .poll(
+      async () => (await statusTexts()).some((text) => text.includes('Reading your courses, progress and notes')),
+      { timeout: 30_000 }
+    )
+    .toBe(true);
+});
+
 test('the backup reminder exports a file instead of navigating away', async ({ page }) => {
   await seedCourse(page);
   await page.goto('/#/dashboard');

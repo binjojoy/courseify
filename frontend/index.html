@@ -39,6 +39,176 @@
     
     <!-- Material Symbols Outlined -->
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
+
+    <!--
+      Styles for the boot shell below, inlined on purpose.
+
+      That shell exists to be visible BEFORE the app bundle arrives, which
+      means before the stylesheet that carries the app's CSS has arrived too. The
+      previous version styled it with Tailwind utility classes, so in dev — where
+      Vite injects app CSS with JavaScript rather than a render-blocking <link> —
+      it painted unstyled: a transparent background and an SVG with a viewBox but
+      no resolved size, which filled the viewport and rendered as a large black
+      triangle on white. A loading state that depends on a stylesheet it is
+      supposed to precede cannot do its job, so this is self-contained.
+
+      The custom properties mirror src/index.css exactly, so the hand-off to the
+      real app is not a colour change. The inline script above has already put
+      the theme class on <html> by the time this paints.
+    -->
+    <style>
+      :root {
+        --bg-canvas: #F4F5F7;
+        --bg-surface: #FFFFFF;
+        --bg-hover: #EEF0F3;
+        --border-default: #DDE1E7;
+        --text-primary: #161A22;
+        --text-muted: #667085;
+        --accent: #2456D6;
+      }
+      html.dark {
+        --bg-canvas: #0B0F17;
+        --bg-surface: #0F172A;
+        --bg-hover: #1E293B;
+        --border-default: #1E293B;
+        --text-primary: #F1F5F9;
+        --text-muted: #64748B;
+        --accent: #3B82F6;
+      }
+      #app-boot-shell {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg-canvas);
+        color: var(--text-primary);
+        font-family: "Google Sans", Arial, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      #app-boot-shell .shell-bar {
+        position: fixed;
+        inset: 0 0 auto 0;
+        z-index: 50;
+        height: 3.5rem;
+        background: var(--bg-surface);
+        border-bottom: 1px solid var(--border-default);
+      }
+      #app-boot-shell .shell-row {
+        max-width: 1240px;
+        margin: 0 auto;
+        height: 100%;
+        padding: 0 1rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+      }
+      #app-boot-shell .shell-brand {
+        display: flex;
+        align-items: center;
+        gap: 0.625rem;
+        min-width: 0;
+      }
+      #app-boot-shell .shell-mark {
+        width: 1.5rem;
+        height: 1.5rem;
+        flex: 0 0 auto;
+        border-radius: 0.25rem;
+        background: var(--accent);
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      /* Both dimensions are declared on the element as well as in CSS, so the
+         triangle can never fall back to filling its container. */
+      #app-boot-shell .shell-mark svg {
+        width: 0.875rem;
+        height: 0.875rem;
+        fill: currentColor;
+      }
+      #app-boot-shell .shell-word {
+        font-size: 0.875rem;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+      #app-boot-shell .shell-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      #app-boot-shell .sk {
+        position: relative;
+        overflow: hidden;
+        background: var(--bg-hover);
+        border-radius: 0.5rem;
+      }
+      #app-boot-shell .sk::after {
+        position: absolute;
+        inset: 0;
+        content: "";
+        transform: translateX(-100%);
+        background: linear-gradient(90deg, transparent, var(--bg-surface), transparent);
+        opacity: 0.55;
+        animation: shell-shimmer 1.35s ease-in-out infinite;
+      }
+      @keyframes shell-shimmer {
+        to { transform: translateX(100%); }
+      }
+      #app-boot-shell .shell-progress {
+        position: fixed;
+        top: 3.5rem;
+        left: 0;
+        right: 0;
+        height: 2px;
+        overflow: hidden;
+        z-index: 50;
+        background: var(--border-default);
+      }
+      #app-boot-shell .shell-progress span {
+        display: block;
+        height: 100%;
+        width: 40%;
+        background: var(--accent);
+        animation: shell-sweep 1.15s ease-in-out infinite;
+      }
+      @keyframes shell-sweep {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(250%); }
+      }
+      #app-boot-shell .shell-main {
+        padding: calc(3.5rem + 1.5rem) 1rem 3rem;
+        max-width: 1240px;
+        margin: 0 auto;
+      }
+      #app-boot-shell .shell-grid {
+        display: grid;
+        gap: 1.5rem;
+      }
+      @media (min-width: 1024px) {
+        #app-boot-shell .shell-row { padding: 0 2rem; }
+        #app-boot-shell .shell-main { padding: calc(3.5rem + 2.5rem) 2rem 3rem; }
+        #app-boot-shell .shell-grid { grid-template-columns: minmax(0, 1fr) 18rem; }
+      }
+      #app-boot-shell .shell-status {
+        margin: 2.5rem auto 0;
+        max-width: 34rem;
+        text-align: center;
+      }
+      #app-boot-shell .shell-status-title {
+        font-size: 0.9375rem;
+        font-weight: 600;
+      }
+      #app-boot-shell .shell-status-detail {
+        margin: 0.375rem 0 0;
+        font-size: 0.8125rem;
+        line-height: 1.5;
+        color: var(--text-muted);
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #app-boot-shell .sk::after,
+        #app-boot-shell .shell-progress span { animation: none; }
+      }
+    </style>
   </head>
   <body class="bg-bg-canvas text-text-primary antialiased min-h-screen selection:bg-blue-600/20 selection:text-blue-600">
     <div id="root">
@@ -47,14 +217,92 @@
         is a blank white rectangle for as long as the bundle takes to download,
         parse and execute. main.tsx clears this node right before createRoot
         mounts, so it never costs a repaint on a warm load.
+
+        Its structure deliberately mirrors the real app — fixed 3.5rem bar, then a
+        video-and-sidebar grid — so the hand-off to React reads as one screen
+        filling in, rather than a centred logo vanishing into a different layout.
+        See the inline <style> above for why those styles are inlined.
       -->
-      <div id="app-boot-shell" class="min-h-screen flex flex-col items-center justify-center gap-4 bg-bg-canvas text-text-primary">
-        <div class="w-9 h-9 rounded-xl bg-accent flex items-center justify-center text-white shadow-sm" aria-hidden="true">
-          <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><polygon points="6 4 20 12 6 20 6,4"></polygon></svg>
+      <div id="app-boot-shell" role="status" aria-live="polite" aria-label="Loading Courseify">
+        <div class="shell-bar">
+          <div class="shell-row">
+            <div class="shell-brand">
+              <span class="shell-mark" aria-hidden="true">
+                <svg width="14" height="14" viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                  <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                </svg>
+              </span>
+              <span class="shell-word">Courseify</span>
+            </div>
+            <div class="shell-actions" aria-hidden="true">
+              <span class="sk" style="width:2.25rem;height:2.25rem"></span>
+              <span class="sk" style="width:2.25rem;height:2.25rem"></span>
+              <span class="sk" style="width:2.25rem;height:2.25rem;border-radius:9999px"></span>
+            </div>
+          </div>
         </div>
-        <p class="text-sm font-medium text-text-muted">Loading Courseify…</p>
+
+        <div class="shell-progress" aria-hidden="true"><span></span></div>
+
+        <div class="shell-main">
+          <div class="shell-grid">
+            <div>
+              <span class="sk" style="display:block;width:100%;padding-top:56.25%;border-radius:0.75rem"></span>
+              <div style="margin-top:1.25rem;display:grid;gap:0.75rem">
+                <span class="sk" style="display:block;width:75%;height:1.75rem"></span>
+                <span class="sk" style="display:block;width:50%;height:1rem"></span>
+                <span class="sk" style="display:block;width:100%;height:6rem;border-radius:0.75rem"></span>
+              </div>
+            </div>
+            <div data-shell-sidebar style="display:none;gap:0.75rem">
+              <span class="sk" style="display:block;width:100%;height:6rem;border-radius:0.75rem"></span>
+              <span class="sk" style="display:block;width:100%;height:3.5rem"></span>
+              <span class="sk" style="display:block;width:100%;height:3.5rem"></span>
+              <span class="sk" style="display:block;width:100%;height:3.5rem"></span>
+              <span class="sk" style="display:block;width:100%;height:3.5rem"></span>
+            </div>
+          </div>
+
+          <div class="shell-status">
+            <p class="shell-status-title">Loading your library</p>
+            <p class="shell-status-detail" data-shell-detail>
+              Starting Courseify. Your courses, progress and notes are read from this
+              browser, so nothing is being uploaded.
+            </p>
+          </div>
+        </div>
       </div>
     </div>
+    <script>
+      // Show the sidebar skeleton on wide viewports. A media query cannot drive an
+      // inline style, and naming the element keeps this next to what it controls.
+      (function () {
+        var sidebar = document.querySelector('[data-shell-sidebar]');
+        if (!sidebar) return;
+        var wide = window.matchMedia('(min-width: 1024px)');
+        var apply = function () { sidebar.style.display = wide.matches ? 'grid' : 'none'; };
+        apply();
+        if (wide.addEventListener) wide.addEventListener('change', apply);
+      })();
+
+      // If the bundle still has not arrived, add a second line rather than
+      // replacing the first. Swapping the text threw away the explanation the
+      // user had already read, and made the two states mutually exclusive, so
+      // there was no ordering in which both could be observed. Guarded because
+      // main.tsx removes this node before React mounts, and a timer firing into a
+      // detached node is pointless even though it is harmless.
+      window.setTimeout(function () {
+        var detail = document.querySelector('[data-shell-detail]');
+        if (!detail || detail.parentNode.querySelector('[data-shell-slow]')) return;
+        var slow = document.createElement('p');
+        slow.className = 'shell-status-detail';
+        slow.setAttribute('data-shell-slow', '');
+        slow.textContent =
+          'Still starting up. This is usually a slow connection on the first visit — ' +
+          'your courses and progress are safe in this browser meanwhile.';
+        detail.parentNode.insertBefore(slow, detail.nextSibling);
+      }, 5000);
+    </script>
     <noscript>
       <div class="min-h-screen flex items-center justify-center px-6 text-center bg-bg-canvas text-text-primary">
         <div class="max-w-md">
