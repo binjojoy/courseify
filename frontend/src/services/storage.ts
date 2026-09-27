@@ -498,6 +498,11 @@ class StorageService {
       .filter(key => key.startsWith(PREFIX))
       .forEach(key => localStorage.removeItem(key));
     localStorage.removeItem(GEMINI_API_KEY);
+    Object.keys(localStorage)
+      .filter(key => key.startsWith('courseify:gemini-usage:'))
+      .forEach(key => localStorage.removeItem(key));
+    window.dispatchEvent(new Event('courseify:gemini-key-changed'));
+    window.dispatchEvent(new Event('courseify:gemini-usage-updated'));
     this.hasInitialized = false;
     this.init();
     this.triggerUpdate();

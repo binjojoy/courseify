@@ -72,6 +72,21 @@ body {
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
+.skeleton-block {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-hover);
+}
+
+.skeleton-block::after {
+  position: absolute;
+  inset: 0;
+  content: '';
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--bg-surface) 55%, transparent), transparent);
+  animation: skeletonShimmer 1.35s ease-in-out infinite;
+}
+
 button, a, input, textarea, select {
   transition-duration: 180ms;
   transition-timing-function: ease-out;
@@ -93,6 +108,10 @@ button, a, input, textarea, select {
 @keyframes pageFadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+@keyframes skeletonShimmer {
+  to { transform: translateX(100%); }
 }
 
 :where(button, a, input, textarea, select, [tabindex="0"]):focus-visible {

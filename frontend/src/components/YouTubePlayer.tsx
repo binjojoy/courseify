@@ -631,10 +631,8 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
         <>
           {/* Loading Spinner */}
           {isLoading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-[#030712] z-20">
-              <span className="material-symbols-outlined text-[36px] text-accent animate-spin">
-                progress_activity
-              </span>
+            <div className="absolute inset-0 z-20 bg-[#030712] p-4" role="status" aria-label="Loading video player">
+              <div className="skeleton-block h-full w-full rounded-lg bg-white/5" />
             </div>
           )}
 

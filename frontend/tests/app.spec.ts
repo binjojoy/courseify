@@ -21,6 +21,7 @@ const videos = [
 
 async function seedCourse(page: Page) {
   await page.addInitScript(({ courseData, videoData }) => {
+    localStorage.setItem('courseify:last-seen-release', 'v1.6.0');
     localStorage.setItem('courseify:v1:courses', JSON.stringify([courseData]));
     localStorage.setItem(`courseify:v1:course:${courseData.id}:videos`, JSON.stringify(videoData));
     localStorage.setItem(`courseify:v1:course:${courseData.id}:progress`, JSON.stringify({ lastVideoId: videoData[0].videoId, updatedAt: new Date().toISOString(), completedAt: null, videos: {} }));
@@ -28,6 +29,7 @@ async function seedCourse(page: Page) {
 }
 
 test('add-course form exposes invalid URL state', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('courseify:last-seen-release', 'v1.6.0'));
   await page.goto('/#/add');
   await expect(page.getByTestId('add-course-page')).toBeVisible();
   await page.getByTestId('playlist-url-input').fill('https://example.com/not-a-youtube-source');

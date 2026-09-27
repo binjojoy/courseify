@@ -17,6 +17,9 @@ import { NotFoundPage } from './pages/NotFoundPage';
 import { AuditPage } from './pages/AuditPage';
 import { GeminiKeyModal } from './components/GeminiKeyModal';
 import { CommandPalette } from './components/CommandPalette';
+import { LoadingScreen } from './components/LoadingScreen';
+import { ReleaseNotesModal } from './components/ReleaseNotesModal';
+import { APP_VERSION, RELEASE_NOTICE_KEY } from './config/app';
 
 type ViewMode = 'home' | 'dashboard' | 'player' | 'privacy' | 'terms' | 'notfound' | 'audit';
 
@@ -35,6 +38,8 @@ export const App: React.FC = () => {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastUndoAction, setToastUndoAction] = useState<{ label: string; onUndo: () => void; durationMs?: number } | null>(null);
+  const [isBooting, setIsBooting] = useState(true);
+  const [isReleaseNotesOpen, setIsReleaseNotesOpen] = useState(false);
 
   // Parse location hash on load and hashchange
   const parseRoute = () => {
@@ -100,13 +105,18 @@ export const App: React.FC = () => {
       document.documentElement.classList.remove('dark');
     }
 
-    parseRoute();
+    const bootTimer = window.setTimeout(() => {
+      parseRoute();
+      setIsBooting(false);
+      setIsReleaseNotesOpen(localStorage.getItem(RELEASE_NOTICE_KEY) !== APP_VERSION);
+    }, 260);
     window.addEventListener('hashchange', parseRoute);
     const openGeminiSettings = () => setIsGeminiKeyModalOpen(true);
     window.addEventListener('courseify:open-gemini-settings', openGeminiSettings);
     return () => {
       window.removeEventListener('hashchange', parseRoute);
       window.removeEventListener('courseify:open-gemini-settings', openGeminiSettings);
+      window.clearTimeout(bootTimer);
     };
   }, []);
 
@@ -225,6 +235,13 @@ export const App: React.FC = () => {
     storage.saveSettings({ ...settings, theme });
     document.documentElement.classList.toggle('dark', theme === 'dark');
   };
+
+  const dismissReleaseNotes = () => {
+    localStorage.setItem(RELEASE_NOTICE_KEY, APP_VERSION);
+    setIsReleaseNotesOpen(false);
+  };
+
+  if (isBooting) return <LoadingScreen />;
 
   return (
     <div className="min-h-screen flex flex-col bg-bg-canvas text-text-primary">
@@ -360,8 +377,11 @@ export const App: React.FC = () => {
         onNavigate={(courseId, videoId) => navigateTo('player', courseId, videoId)}
         onOpenGeminiSettings={() => setIsGeminiKeyModalOpen(true)}
         onToggleTheme={toggleTheme}
+        currentView={currentView}
+        onShowToast={showToast}
       />
       <CommandPaletteOpener onOpen={() => setIsCommandPaletteOpen(true)} />
+      <ReleaseNotesModal isOpen={isReleaseNotesOpen} onClose={dismissReleaseNotes} />
     </div>
   );
 };

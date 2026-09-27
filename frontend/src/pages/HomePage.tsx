@@ -2,6 +2,8 @@ import React, { useState, useRef } from 'react';
 import { fetchPlaylist, ApiError, getYouTubeSource } from '../services/api';
 import { getCourseSourceKey } from '../utils/course';
 import { storage } from '../services/storage';
+import { IngestionSkeleton } from '../components/LoadingScreen';
+import { APP_VERSION } from '../config/app';
 
 interface HomePageProps {
   onNavigate: (view: 'home' | 'dashboard' | 'player', courseId?: string) => void;
@@ -215,9 +217,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
               {/* Loading progress bar */}
               {isLoading && (
                 <div className="mt-4 flex flex-col gap-2 animate-fadeIn text-left">
-                  <div className="w-full h-1 bg-border-default rounded-full overflow-hidden">
-                    <div className="h-full bg-accent animate-pulse w-3/4"></div>
-                  </div>
+                  <div className="skeleton-block h-2 w-full rounded-full" />
                   <div className="flex items-center justify-between text-xs text-text-secondary" role="status" aria-live="polite">
                     <span>{fetchProgress || 'Fetching playlist…'}</span>
                     <button
@@ -231,6 +231,8 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
                 </div>
               )}
             </form>
+
+            {isLoading && <IngestionSkeleton />}
 
             {/* Utility line */}
             <div className="w-full flex items-center justify-between px-2 pt-3 text-[13px]">
@@ -310,6 +312,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
               Terms of Service
             </button>
           </div>
+          <span className="text-[11px] font-medium tracking-wide text-text-muted">Courseify {APP_VERSION}</span>
         </footer>
       </div>
     </main>
