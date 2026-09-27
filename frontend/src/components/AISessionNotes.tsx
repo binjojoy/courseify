@@ -21,6 +21,8 @@ export const AISessionNotes: React.FC<AISessionNotesProps> = ({ courseId, video,
   const [activeTab, setActiveTab] = useState<StudyTab>('summary');
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
+  /** Shown while the service is retrying a transient failure, so a wait is not silent. */
+  const [retryNotice, setRetryNotice] = useState<string | null>(null);
   const [requiresKeyUpdate, setRequiresKeyUpdate] = useState(false);
   const [selectedAnswers, setSelectedAnswers] = useState<Record<number, number>>({});
   const [flippedCard, setFlippedCard] = useState<number | null>(null);
@@ -30,6 +32,7 @@ export const AISessionNotes: React.FC<AISessionNotesProps> = ({ courseId, video,
     setActiveTab(initialTab);
     setSelectedAnswers({});
     setFlippedCard(null);
+    setRetryNotice(null);
   }, [courseId, video.videoId, initialTab]);
 
   const handleGenerateNotes = async () => {
@@ -41,8 +44,14 @@ export const AISessionNotes: React.FC<AISessionNotesProps> = ({ courseId, video,
     setIsGenerating(true);
     setGenerationError(null);
     setRequiresKeyUpdate(false);
+    setRetryNotice(null);
     try {
-      const result = await generateStudyNotes(apiKey, video);
+      const result = await generateStudyNotes(apiKey, video, {
+        onRetry: (attempt) => {
+          setRetryNotice(`Gemini is busy right now \u2014 retrying (attempt ${attempt + 1})`);
+        }
+      });
+      setRetryNotice(null);
       setStudyNotes(result);
       setSelectedAnswers({});
       setFlippedCard(null);
@@ -57,6 +66,7 @@ export const AISessionNotes: React.FC<AISessionNotesProps> = ({ courseId, video,
         onShowToast(message);
       }
     } catch (error) {
+      setRetryNotice(null);
       const message = error instanceof Error ? error.message : 'Could not generate AI notes.';
       setGenerationError(message);
       setRequiresKeyUpdate(error instanceof Error && /api key|key is invalid|API_KEY_INVALID|permission denied/i.test(error.message));
@@ -110,6 +120,7 @@ export const AISessionNotes: React.FC<AISessionNotesProps> = ({ courseId, video,
         </div>
       </div>
 
+      {retryNotice && <div role="status" className="mt-3 rounded-lg border border-border-default bg-bg-hover px-3 py-2 text-sm leading-relaxed text-text-secondary">{retryNotice}</div>}
       {generationError && <div role="alert" className="mt-3 rounded-lg border border-error/30 bg-error-subtle px-3 py-2 text-sm leading-relaxed text-error">{generationError}{requiresKeyUpdate && <button type="button" onClick={onOpenKeySettings} className="ml-2 font-semibold underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">Update Gemini key</button>}</div>}
       {!getGeminiApiKey() && <button type="button" onClick={onOpenKeySettings} className="mt-4 inline-flex items-center gap-2 text-sm text-text-secondary hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"><KeyRound size={15} />Configure Gemini key</button>}
       {!studyNotes ? (

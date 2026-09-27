@@ -291,22 +291,125 @@ test('selecting a lesson initializes the YouTube player with its video id', asyn
 
 test('Gemini quota errors remain visible in the AI workspace', async ({ page }) => {
   await seedCourse(page);
-  await page.addInitScript(() => {
-    localStorage.setItem('courseify:gemini-api-key', 'test-key');
-    const nativeFetch = window.fetch.bind(window);
-    window.fetch = (input, init) => {
-      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : '';
-      if (url.includes('generativelanguage.googleapis.com')) {
-        return Promise.resolve(new Response(JSON.stringify({ error: { message: 'Daily quota exceeded.' } }), {
-          status: 429,
-          headers: { 'Content-Type': 'application/json' }
-        }));
-      }
-      return nativeFetch(input, init);
-    };
-  });
+  await stubGemini(page, [{ status: 429, message: 'Daily quota exceeded.' }]);
+
   await page.goto('/#/course/course-test');
   await openWorkspaceTab(page, 'AI Notes');
   await page.getByRole('button', { name: 'Generate study guide' }).click();
+
   await expect(page.getByRole('alert')).toContainText('Daily quota exceeded.');
+  // An exhausted quota cannot refill in seconds, so the message is surfaced at
+  // once rather than held behind a backoff the user would just wait through.
+  expect(await geminiCalls(page)).toBe(1);
+});
+
+/**
+ * Stub the Gemini endpoint with a scripted sequence of responses, and count the
+ * attempts so a test can assert how hard the client tried.
+ *
+ * @param statuses one entry per response the endpoint should return. The last
+ *   entry repeats, so a test only has to describe the failures it cares about.
+ */
+function stubGemini(page: Page, statuses: Array<{ status: number; message?: string; body?: string }>) {
+  return page.addInitScript(responses => {
+    localStorage.setItem('courseify:gemini-api-key', 'test-key');
+    const calls: number[] = [];
+    (window as unknown as { __geminiCalls: number[] }).__geminiCalls = calls;
+
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : '';
+      if (!url.includes('generativelanguage.googleapis.com')) return nativeFetch(input, init);
+
+      calls.push(calls.length);
+      const step = responses[Math.min(calls.length - 1, responses.length - 1)];
+      if (step.body !== undefined) {
+        return Promise.resolve(new Response(step.body, {
+          status: step.status,
+          headers: { 'Content-Type': 'application/json' }
+        }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ error: { message: step.message || 'boom' } }), {
+        status: step.status,
+        headers: { 'Content-Type': 'application/json' }
+      }));
+    };
+  }, statuses);
+}
+
+const geminiCalls = (page: Page) => page.evaluate(() => (window as unknown as { __geminiCalls: number[] }).__geminiCalls.length);
+
+/**
+ * A minimal but complete study guide, shaped the way the API returns one.
+ * At least one well-formed quiz question is required, because the service
+ * rejects a guide that has no usable questions.
+ */
+const recoveredGuide = JSON.stringify({
+  candidates: [{
+    content: {
+      parts: [{
+        text: JSON.stringify({
+          oneSentenceSummary: 'A recovered study guide.',
+          keyTakeaways: ['First point', 'Second point'],
+          detailedNotes: '# Notes\n\nSome detail.',
+          timestampedHighlights: [],
+          quizQuestions: [{
+            question: 'Which point came first?',
+            options: ['First point', 'Second point', 'A third point', 'A fourth point'],
+            answerIndex: 0
+          }]
+        })
+      }]
+    }
+  }]
+});
+
+test('a transient Gemini capacity error is retried instead of shown as a failure', async ({ page }) => {
+  await seedCourse(page);
+  // The first attempt hits Google's "high demand" 503; the second succeeds.
+  await stubGemini(page, [
+    { status: 503, message: 'This model is currently experiencing high demand.' },
+    { status: 200, body: recoveredGuide }
+  ]);
+
+  await page.goto('/#/course/course-test');
+  await openWorkspaceTab(page, 'AI Notes');
+  await page.getByRole('button', { name: 'Generate study guide' }).click();
+
+  // The guide arrives, so the user never has to press Generate again.
+  await expect(page.getByText('A recovered study guide.')).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(await geminiCalls(page)).toBe(2);
+});
+
+test('a sustained Gemini capacity error explains whose side it is on', async ({ page }) => {
+  await seedCourse(page);
+  await stubGemini(page, [{ status: 503, message: 'This model is currently experiencing high demand.' }]);
+
+  await page.goto('/#/course/course-test');
+  await openWorkspaceTab(page, 'AI Notes');
+  await page.getByRole('button', { name: 'Generate study guide' }).click();
+
+  const alert = page.getByRole('alert');
+  // The backoff is jittered, so four attempts can legitimately take up to ~7s
+  // before the error is surfaced. The default 5s assertion wait is too tight.
+  const wait = { timeout: 20_000 };
+  await expect(alert).toContainText('Google', wait);
+  // Google's raw capacity wording is replaced, not passed through.
+  await expect(alert).not.toContainText('experiencing high demand', wait);
+  // One initial attempt plus three retries, then it gives up and says so.
+  expect(await geminiCalls(page)).toBe(4);
+});
+
+test('a Gemini request that cannot succeed is not retried', async ({ page }) => {
+  await seedCourse(page);
+  await stubGemini(page, [{ status: 400, message: 'Malformed request.' }]);
+
+  await page.goto('/#/course/course-test');
+  await openWorkspaceTab(page, 'AI Notes');
+  await page.getByRole('button', { name: 'Generate study guide' }).click();
+
+  await expect(page.getByRole('alert')).toContainText('Malformed request.');
+  // Retrying a permanent failure would only burn the user's quota.
+  expect(await geminiCalls(page)).toBe(1);
 });
