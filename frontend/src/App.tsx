@@ -103,6 +103,12 @@ export const App: React.FC = () => {
       document.documentElement.classList.remove('dark');
     }
 
+    // A minimum display time for the boot skeleton, not a wait on real work.
+    // Reading the library is synchronous, so the app is renderable as soon as
+    // this effect runs; holding the skeleton for a beat stops a 260ms flash of
+    // skeleton on a warm cache, which reads as a glitch. The genuinely slow part
+    // of startup is the bundle download, and that is covered by the static boot
+    // shell in index.html, which is on screen from the first paint.
     const bootTimer = window.setTimeout(() => {
       parseRoute();
       setIsBooting(false);

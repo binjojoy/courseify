@@ -26,6 +26,40 @@ const MAX_NOTES = 20000;
 const MAX_NOTE_LENGTH = 10000;
 
 /**
+ * The export timestamp is in both the filename and the payload, so two
+ * downloads in the same folder are tellable apart.
+ */
+export const backupFilename = (exportedAt: string): string =>
+  `courseify-backup-${exportedAt.slice(0, 19).replace(/[:T]/g, '-')}.json`;
+
+/**
+ * Hand a backup payload to the browser as a download.
+ *
+ * Deliberately free of any storage dependency: the caller supplies the payload
+ * and decides what to record afterwards, so this stays usable from the navbar
+ * menu and the dashboard reminder alike without either duplicating the other.
+ *
+ * @throws if the browser refuses to create the object URL, so the caller can
+ * report a failed export rather than silently doing nothing.
+ */
+export const downloadBackup = (backup: BackupData): void => {
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = backupFilename(backup.exportedAt);
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    // Revoke on the next tick: revoking synchronously can cancel the download
+    // in some browsers before it starts reading the blob.
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+};
+
+/**
  * A rejected import, carrying a reason code so the UI can offer the right
  * remedy (try again vs. re-export from a Courseify browser) rather than a
  * generic "import failed".

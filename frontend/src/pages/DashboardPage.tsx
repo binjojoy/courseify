@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Course, FavoriteVideo, NavigateFn } from '../types';
 import { storage } from '../services/storage';
+import { downloadBackup } from '../services/backup';
 import { CourseCard } from '../components/CourseCard';
 import { ContinueLearningBanner } from '../components/ContinueLearningBanner';
 import { fetchPlaylist, ApiError, getYouTubeSource } from '../services/api';
@@ -45,6 +46,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const [isFavoritesExpanded, setIsFavoritesExpanded] = useState(false);
   const [lastBackupAt, setLastBackupAt] = useState<string | null>(() => storage.getLastBackupAt());
   const [isBackupReminderDismissed, setIsBackupReminderDismissed] = useState(false);
+  const [isBackupGuideOpen, setIsBackupGuideOpen] = useState(false);
 
   // Quick Add Course Form in Dashboard
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
@@ -276,6 +278,27 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     return `Your last backup was exported on ${lastBackupDate}. Exporting again keeps it current.`;
   }, [courses.length, isBackupReminderDismissed, lastBackupAt]);
 
+  /**
+   * Export from the reminder itself.
+   *
+   * This used to be a button labelled "How to back up" whose only action was to
+   * navigate to the home page, so it moved the user somewhere else and told them
+   * nothing. The reminder should be actionable: one press produces the file the
+   * reminder is asking for.
+   */
+  const handleExportBackup = () => {
+    try {
+      const backup = storage.exportBackup();
+      downloadBackup(backup);
+      // Recording the export clears the reminder: it is derived from this stamp.
+      storage.recordBackupExport();
+      setIsBackupReminderDismissed(true);
+      onShowToast('Backup exported successfully.');
+    } catch {
+      onShowToast('Could not export your backup. Check available browser storage and try again.');
+    }
+  };
+
   return (
     <main className="w-full pt-14 bg-bg-canvas min-h-screen" data-testid="dashboard">
       <div className="w-full max-w-[1240px] mx-auto px-4 md:px-6 lg:px-8 pb-16">
@@ -310,25 +333,80 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         {backupReminder && (
           <div
             role="status"
-            className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-text-primary animate-fadeIn"
+            className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-text-primary animate-fadeIn"
           >
-            <span className="material-symbols-outlined text-[20px] text-amber-500" aria-hidden="true">backup</span>
-            <p className="flex-1 min-w-[220px] leading-relaxed">{backupReminder}</p>
-            <button
-              type="button"
-              onClick={() => onNavigate('home')}
-              className="h-8 px-3 rounded-lg bg-accent text-white text-xs font-semibold hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-            >
-              How to back up
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsBackupReminderDismissed(true)}
-              aria-label="Dismiss backup reminder"
-              className="text-text-muted hover:text-text-primary transition-colors"
-            >
-              <span className="material-symbols-outlined text-[18px]" aria-hidden="true">close</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <span className="material-symbols-outlined text-[20px] text-amber-500" aria-hidden="true">backup</span>
+              <p className="flex-1 min-w-[220px] leading-relaxed">{backupReminder}</p>
+              <button
+                type="button"
+                onClick={handleExportBackup}
+                className="h-8 px-3 rounded-lg bg-accent text-white text-xs font-semibold hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              >
+                Export backup
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsBackupGuideOpen(open => !open)}
+                aria-expanded={isBackupGuideOpen}
+                aria-controls="backup-guide"
+                className="inline-flex h-8 items-center gap-1 rounded-lg px-3 text-xs font-semibold text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              >
+                {/* The name stays "How this works" when open as well. Swapping it
+                    to "Hide guide" means the control a screen reader user just
+                    activated is no longer the control they activated; the open
+                    state is carried by aria-expanded and the chevron instead. */}
+                <span
+                  className={`material-symbols-outlined text-[16px] transition-transform duration-150 ${isBackupGuideOpen ? 'rotate-180' : ''}`}
+                  aria-hidden="true"
+                >
+                  expand_more
+                </span>
+                <span>How this works</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsBackupReminderDismissed(true)}
+                aria-label="Dismiss backup reminder"
+                className="text-text-muted hover:text-text-primary transition-colors"
+              >
+                <span className="material-symbols-outlined text-[18px]" aria-hidden="true">close</span>
+              </button>
+            </div>
+
+            {isBackupGuideOpen && (
+              <div id="backup-guide" className="mt-3 border-t border-amber-500/30 pt-3 text-xs leading-relaxed text-text-secondary">
+                <p className="font-semibold text-text-primary">Where your data lives</p>
+                <p className="mt-1">
+                  Courseify has no account and no server copy. Everything you own is stored in this browser
+                  only, so clearing site data, switching browser, or moving to another device means starting
+                  over unless you export a backup.
+                </p>
+                <p className="mt-3 font-semibold text-text-primary">What a backup contains</p>
+                <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                  <li>Your courses and every lesson list</li>
+                  <li>Watch progress, completed lessons, and watch time</li>
+                  <li>All your lesson notes</li>
+                  <li>Profile, settings, favourites, and access-day history</li>
+                </ul>
+                <p className="mt-3 font-semibold text-text-primary">What it does not contain</p>
+                <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                  <li>Your Gemini API key, which is a secret and is never written to a backup</li>
+                  <li>AI study guides, which are not part of the export. You can regenerate them for any lesson that has a Gemini key configured.</li>
+                </ul>
+                <p className="mt-3 font-semibold text-text-primary">How to export and restore</p>
+                <ol className="mt-1 list-decimal space-y-0.5 pl-4">
+                  <li>Press <strong>Export backup</strong> above, or use your profile menu in the top right and choose <strong>Export backup (JSON)</strong>. The file downloads straight to this machine.</li>
+                  <li>Keep that file somewhere safe, such as cloud storage or an external drive.</li>
+                  <li>To restore, open the profile menu and choose <strong>Import backup (JSON)</strong>, then pick the file.</li>
+                  <li>You will be asked how to apply it. <strong>Merge</strong> keeps what you already have and adds anything new, and is the safe default. <strong>Replace</strong> restores the file exactly and discards anything added since it was exported.</li>
+                </ol>
+                <p className="mt-3 text-text-muted">
+                  Nothing is written to your library until you confirm, so cancelling at the confirmation
+                  step leaves your data untouched.
+                </p>
+              </div>
+            )}
           </div>
         )}
 

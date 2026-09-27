@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { storage } from '../services/storage';
 import { UserProfile, AppSettings } from '../types';
 import { ImportConflictDialog } from './ImportConflictDialog';
-import { BackupValidationError, MAX_BACKUP_BYTES, type ImportAnalysis, type ImportStrategy } from '../services/backup';
+import { BackupValidationError, downloadBackup, MAX_BACKUP_BYTES, type ImportAnalysis, type ImportStrategy } from '../services/backup';
 import { KeyRound, Search, Sparkles } from 'lucide-react';
 import { GeminiUsage, getGeminiApiKey, getGeminiUsage } from '../services/ai';
 
@@ -98,20 +98,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const handleExportBackup = () => {
     try {
       const backup = storage.exportBackup();
-      const json = JSON.stringify(backup, null, 2);
-      const blob = new Blob([json], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      // The export timestamp is in both the filename and the payload, so the
-      // user can tell two downloads apart in their Downloads folder.
-      a.href = url;
-      a.download = `courseify-backup-${backup.exportedAt.slice(0, 19).replace(/[:T]/g, '-')}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      // Revoke on the next tick: revoking synchronously can cancel the download
-      // in some browsers before it starts reading the blob.
-      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      downloadBackup(backup);
       // The file exists now, so the dashboard can stop nagging about a backup.
       storage.recordBackupExport();
       setIsAvatarOpen(false);

@@ -3,6 +3,7 @@ import type { Page } from '@playwright/test';
 
 import { APP_VERSION } from '../src/config/app';
 import { CURRENT_BACKUP_SCHEMA_VERSION } from '../src/services/backup';
+import { stubControllablePlayer, ytLog } from './stubs';
 
 /**
  * Regression tests for the third-party audit.
@@ -462,83 +463,6 @@ test('the import dialog traps focus and closes on Escape', async ({ page }) => {
 // ---------------------------------------------------------------------------
 // Player stability
 // ---------------------------------------------------------------------------
-
-/**
- * A controllable stand-in for the IFrame API.
- *
- * Unlike {@link stubYouTubePlayer} this records how many times an embed is
- * constructed or destroyed, lets the test drive the playback clock, and can
- * emit the state changes YouTube would emit on its own. That is what makes it
- * possible to assert the two symptoms a user actually reported: a video that
- * reloads every few seconds, and a pause that does not stick.
- */
-function stubControllablePlayer(page: Page) {
-  return page.addInitScript(() => {
-    const log = {
-      constructed: 0,
-      destroyed: 0,
-      playCalls: 0,
-      pauseCalls: 0,
-      mediaTime: 0,
-      state: 1
-    };
-    (window as unknown as { __yt: typeof log }).__yt = log;
-
-    const live = new Set<{ fire: (state: number) => void }>();
-
-    (window as unknown as { YT: unknown }).YT = {
-      PlayerState: { ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5 },
-      Player: class {
-        private onStateChange: (e: { target: unknown; data: number }) => void;
-
-        constructor(container: HTMLElement, options: { videoId: string; events: Record<string, (e: never) => void> }) {
-          log.constructed += 1;
-          const iframe = document.createElement('iframe');
-          iframe.title = 'Course lesson video';
-          container.appendChild(iframe);
-          this.onStateChange = options.events.onStateChange as unknown as (e: { target: unknown; data: number }) => void;
-          const entry = { fire: (state: number) => this.onStateChange({ target: this, data: state }) };
-          live.add(entry);
-          setTimeout(() => {
-            (options.events.onReady as unknown as (e: { target: unknown }) => void)({ target: this });
-            entry.fire(1);
-          }, 0);
-        }
-        getIframe() { return document.querySelector('iframe'); }
-        getCurrentTime() { return log.mediaTime; }
-        getDuration() { return 600; }
-        getPlayerState() { return log.state; }
-        getVideoLoadedFraction() { return 1; }
-        getAvailableQualityLevels() { return []; }
-        getPlaybackQuality() { return 'auto'; }
-        getVolume() { return 100; }
-        getPlaybackRate() { return 1; }
-        isMuted() { return false; }
-        playVideo() { log.playCalls += 1; log.state = 1; }
-        pauseVideo() { log.pauseCalls += 1; log.state = 2; }
-        seekTo(seconds: number) { log.mediaTime = seconds; }
-        setPlaybackQuality() {}
-        setPlaybackRate() {}
-        setVolume() {}
-        mute() {}
-        unMute() {}
-        stopVideo() {}
-        unloadModule() {}
-        destroy() { log.destroyed += 1; document.querySelector('iframe')?.remove(); }
-      }
-    };
-
-    (window as unknown as { __ytSeek: unknown }).__ytSeek = (seconds: number) => {
-      log.mediaTime = seconds;
-    };
-    (window as unknown as { __ytPause: unknown }).__ytPause = () => {
-      log.state = 2;
-      live.forEach(entry => entry.fire(2));
-    };
-  });
-}
-
-const ytLog = (page: Page) => page.evaluate(() => (window as unknown as { __yt: { constructed: number; destroyed: number; playCalls: number; mediaTime: number } }).__yt);
 
 test('a lesson keeps one player instance instead of reloading every few seconds', async ({ page }) => {
   await seedLibrary(page);
