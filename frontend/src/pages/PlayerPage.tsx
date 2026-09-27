@@ -161,16 +161,8 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
     window.dispatchEvent(new CustomEvent('courseify:seek-player', { detail: sec }));
   };
 
-  useEffect(() => {
-    const toggleFullscreen = () => {
-      const player = document.querySelector('.courseify-player') as HTMLElement | null;
-      if (!player) return;
-      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
-      else player.requestFullscreen?.().catch(() => {});
-    };
-    document.addEventListener('courseify:toggle-fullscreen', toggleFullscreen);
-    return () => document.removeEventListener('courseify:toggle-fullscreen', toggleFullscreen);
-  }, []);
+  // `courseify:toggle-fullscreen` (command palette) is handled by YouTubePlayer
+  // itself, so there is exactly one implementation to keep in step.
 
   const handleRewatch = () => {
     storage.resetCourseProgress(courseId);
@@ -294,8 +286,14 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
           {/* Video Player Viewport Container with Margin & Spacing */}
           <div className="sticky top-0 z-40 w-full bg-bg-canvas lg:static">
           <div className="w-full bg-bg-canvas flex justify-center px-0 py-0 sm:px-4 lg:px-6 lg:py-6">
-            <section className="relative w-full max-w-[1280px] aspect-video bg-player-black select-none shrink-0 overflow-hidden">
-              <div className="relative w-full h-full overflow-hidden bg-black courseify-player">
+            {/* The video surface. Rounded and bordered like every other card in
+                the app so YouTube's own control bar sits on something that
+                belongs to Courseify rather than on a bare black rectangle. */}
+            <section
+              className="relative w-full max-w-[1280px] aspect-video bg-player-black shrink-0 overflow-hidden rounded-none sm:rounded-xl border-0 sm:border border-border-default shadow-none sm:shadow-sm"
+              data-testid="player-frame"
+            >
+              <div className="relative w-full h-full overflow-hidden bg-player-black courseify-player">
                 {currentVideo ? (
                   <YouTubePlayer
                     key={`${course.id}:${currentVideo.videoId}`}
@@ -305,7 +303,6 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
                     autoplayNext={autoplayNext}
                     autoCompleteThreshold={storage.getSettings().autoCompleteThreshold}
                     onNextVideo={handleNextVideo}
-                    onPrevVideo={handlePrevVideo}
                     onTimeUpdate={(cur) => setCurrentTimeSec(cur)}
                     onAutoComplete={handleAutoComplete}
                   />

@@ -13,10 +13,14 @@ export default defineConfig({
     trace: 'retain-on-failure'
   },
   webServer: {
-    command: 'npm run preview -- --host 127.0.0.1',
+    // Build first, then serve. `vite preview` reads `dist/`, so without the
+    // build step a run silently tests whatever was last built — which is how a
+    // green suite can be reporting on code that no longer exists. `tsc` is part
+    // of `build`, so a type error fails the run here too.
+    command: 'npm run build && npm run preview -- --host 127.0.0.1',
     url: 'http://127.0.0.1:4173',
-    reuseExistingServer: true,
-    timeout: 120000
+    reuseExistingServer: !process.env.CI,
+    timeout: 180000
   },
   projects: [
     { name: 'desktop', use: { ...devices['Desktop Chrome'] } },

@@ -458,3 +458,179 @@ test('the import dialog traps focus and closes on Escape', async ({ page }) => {
   await expect(dialog).toHaveCount(0);
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('courseify:v1:courses') || '[]'))).toHaveLength(1);
 });
+
+// ---------------------------------------------------------------------------
+// Player stability
+// ---------------------------------------------------------------------------
+
+/**
+ * A controllable stand-in for the IFrame API.
+ *
+ * Unlike {@link stubYouTubePlayer} this records how many times an embed is
+ * constructed or destroyed, lets the test drive the playback clock, and can
+ * emit the state changes YouTube would emit on its own. That is what makes it
+ * possible to assert the two symptoms a user actually reported: a video that
+ * reloads every few seconds, and a pause that does not stick.
+ */
+function stubControllablePlayer(page: Page) {
+  return page.addInitScript(() => {
+    const log = {
+      constructed: 0,
+      destroyed: 0,
+      playCalls: 0,
+      pauseCalls: 0,
+      mediaTime: 0,
+      state: 1
+    };
+    (window as unknown as { __yt: typeof log }).__yt = log;
+
+    const live = new Set<{ fire: (state: number) => void }>();
+
+    (window as unknown as { YT: unknown }).YT = {
+      PlayerState: { ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5 },
+      Player: class {
+        private onStateChange: (e: { target: unknown; data: number }) => void;
+
+        constructor(container: HTMLElement, options: { videoId: string; events: Record<string, (e: never) => void> }) {
+          log.constructed += 1;
+          const iframe = document.createElement('iframe');
+          iframe.title = 'Course lesson video';
+          container.appendChild(iframe);
+          this.onStateChange = options.events.onStateChange as unknown as (e: { target: unknown; data: number }) => void;
+          const entry = { fire: (state: number) => this.onStateChange({ target: this, data: state }) };
+          live.add(entry);
+          setTimeout(() => {
+            (options.events.onReady as unknown as (e: { target: unknown }) => void)({ target: this });
+            entry.fire(1);
+          }, 0);
+        }
+        getIframe() { return document.querySelector('iframe'); }
+        getCurrentTime() { return log.mediaTime; }
+        getDuration() { return 600; }
+        getPlayerState() { return log.state; }
+        getVideoLoadedFraction() { return 1; }
+        getAvailableQualityLevels() { return []; }
+        getPlaybackQuality() { return 'auto'; }
+        getVolume() { return 100; }
+        getPlaybackRate() { return 1; }
+        isMuted() { return false; }
+        playVideo() { log.playCalls += 1; log.state = 1; }
+        pauseVideo() { log.pauseCalls += 1; log.state = 2; }
+        seekTo(seconds: number) { log.mediaTime = seconds; }
+        setPlaybackQuality() {}
+        setPlaybackRate() {}
+        setVolume() {}
+        mute() {}
+        unMute() {}
+        stopVideo() {}
+        unloadModule() {}
+        destroy() { log.destroyed += 1; document.querySelector('iframe')?.remove(); }
+      }
+    };
+
+    (window as unknown as { __ytSeek: unknown }).__ytSeek = (seconds: number) => {
+      log.mediaTime = seconds;
+    };
+    (window as unknown as { __ytPause: unknown }).__ytPause = () => {
+      log.state = 2;
+      live.forEach(entry => entry.fire(2));
+    };
+  });
+}
+
+const ytLog = (page: Page) => page.evaluate(() => (window as unknown as { __yt: { constructed: number; destroyed: number; playCalls: number; mediaTime: number } }).__yt);
+
+test('a lesson keeps one player instance instead of reloading every few seconds', async ({ page }) => {
+  await seedLibrary(page);
+  await stubControllablePlayer(page);
+  await page.goto('/#/course/course-test');
+
+  await expect.poll(async () => (await ytLog(page)).constructed).toBe(1);
+
+  // The player writes a resume point every five seconds of playback. That write
+  // is echoed back into the component as a new `initialPositionSec` prop, which
+  // used to be a dependency of the effect that owns the embed — so the iframe
+  // was destroyed and rebuilt, re-buffering the video on the spot.
+  for (let elapsed = 0; elapsed < 24; elapsed += 6) {
+    await page.evaluate(t => (window as unknown as { __ytSeek: (n: number) => void }).__ytSeek(t), elapsed + 6);
+    // Let at least one progress tick run so the persist actually happens.
+    await page.waitForTimeout(1200);
+    const stored = await page.evaluate(() => {
+      const progress = JSON.parse(localStorage.getItem('courseify:v1:course:course-test:progress') || '{}');
+      return progress.videos?.abc12345678?.positionSec ?? 0;
+    });
+    expect(stored).toBeGreaterThan(0);
+    expect((await ytLog(page)).constructed).toBe(1);
+  }
+
+  // Nothing tore the embed down along the way.
+  expect((await ytLog(page)).destroyed).toBe(0);
+});
+
+test('pausing a lesson actually stays paused', async ({ page }) => {
+  await seedLibrary(page);
+  await stubControllablePlayer(page);
+  await page.goto('/#/course/course-test');
+
+  await expect.poll(async () => (await ytLog(page)).constructed).toBe(1);
+
+  // Play far enough that pausing produces a genuinely different resume point.
+  await page.evaluate(() => (window as unknown as { __ytSeek: (n: number) => void }).__ytSeek(37));
+  await page.waitForTimeout(1200);
+  const playsBefore = (await ytLog(page)).playCalls;
+
+  // Pausing makes the player persist the current position. That write was fed
+  // straight back into the prop that rebuilt the embed, and the rebuilt embed
+  // was created with `autoplay: 1` — so the video started playing again about a
+  // second after it was paused.
+  await page.evaluate(() => (window as unknown as { __ytPause: () => void }).__ytPause());
+  await page.waitForTimeout(1500);
+
+  const log = await ytLog(page);
+  expect(log.constructed).toBe(1);
+  expect(log.destroyed).toBe(0);
+  expect(log.playCalls).toBe(playsBefore);
+});
+
+test('the player surface is themed instead of hardcoding one palette', async ({ page }) => {
+  await seedLibrary(page);
+  await stubControllablePlayer(page);
+  await page.goto('/#/course/course-test');
+
+  const frame = page.getByTestId('player-frame');
+  await expect(frame).toBeVisible();
+
+  // Both themes are read inside one synchronous evaluate: the app re-applies its
+  // own theme class on re-render, so toggling across two round trips would let
+  // React put the class back and quietly invalidate the comparison.
+  const result = await frame.evaluate(el => {
+    const surface = el.querySelector('.courseify-player') as HTMLElement | null;
+    if (!surface) return null;
+    const root = document.documentElement;
+    const read = () => ({
+      channels: getComputedStyle(el).getPropertyValue('--player-black').trim(),
+      used: getComputedStyle(surface).backgroundColor
+    });
+    const wasDark = root.classList.contains('dark');
+    root.classList.add('dark');
+    const dark = read();
+    root.classList.remove('dark');
+    const light = read();
+    if (wasDark) root.classList.add('dark');
+    return { dark, light };
+  });
+
+  expect(result).not.toBeNull();
+  const { dark, light } = result!;
+
+  // `--player-black` holds space-separated channels so Tailwind's `/70` and
+  // `/20` modifiers work; resolve it the same way the browser would.
+  const asRgb = (channels: string) => `rgb(${channels.split(/\s+/).join(', ')})`;
+
+  // The token is the single source of truth, and it genuinely differs per theme.
+  expect(dark.channels).not.toBe(light.channels);
+  // The surface resolves to whatever the token currently says, so a hardcoded
+  // hex could not pass both halves of this.
+  expect(dark.used).toBe(asRgb(dark.channels));
+  expect(light.used).toBe(asRgb(light.channels));
+});
