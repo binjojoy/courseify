@@ -1,16 +1,19 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Course, VideoItem, CourseProgress, CourseNotes, FavoriteVideo } from '../types';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Course, VideoItem, CourseProgress, CourseNotes, FavoriteVideo, NavigateFn } from '../types';
 import { storage } from '../services/storage';
 import { fetchVideoDescription } from '../services/api';
+import { getPlayableVideos } from '../utils/course';
+import { computeCourseMetrics, formatDurationHuman } from '../utils/progress';
 import { YouTubePlayer } from '../components/YouTubePlayer';
 import { PlaylistSidebar } from '../components/PlaylistSidebar';
 import { NotesSection } from '../components/NotesSection';
 import { CourseCompleteModal } from '../components/CourseCompleteModal';
+import { AISessionNotes } from '../components/AISessionNotes';
 
 interface PlayerPageProps {
   courseId: string;
   initialVideoId?: string;
-  onNavigate: (view: 'home' | 'dashboard' | 'player', courseId?: string) => void;
+  onNavigate: NavigateFn;
   onShowToast: (msg: string) => void;
 }
 
@@ -28,12 +31,15 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
   const [currentVideoId, setCurrentVideoId] = useState<string>(
     initialVideoId || progress.lastVideoId || videos[0]?.videoId || ''
   );
+  const routeVideoIdRef = useRef(initialVideoId);
   const [isDescExpanded, setIsDescExpanded] = useState(false);
   const [currentTimeSec, setCurrentTimeSec] = useState<number>(0);
   const [autoplayNext, setAutoplayNext] = useState<boolean>(storage.getSettings().autoplayNext);
   const [isCourseCompleteModalOpen, setIsCourseCompleteModalOpen] = useState(false);
-  const [activeTabMobile, setActiveTabMobile] = useState<'videos' | 'notes' | 'about'>('videos');
+  const [activeTabMobile, setActiveTabMobile] = useState<'videos' | 'notes' | 'ai' | 'flashcards'>('videos');
   const [isFav, setIsFav] = useState<boolean>(false);
+
+  const playableVideos = getPlayableVideos(videos);
 
   // Sync state if courseId changes or data updates
   const reloadData = () => {
@@ -48,7 +54,9 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
     setNotes(n);
 
     if (!currentVideoId || !v.some(item => item.videoId === currentVideoId)) {
-      setCurrentVideoId(p.lastVideoId || v[0]?.videoId || '');
+      setCurrentVideoId(p.lastVideoId && v.some(item => item.videoId === p.lastVideoId)
+        ? p.lastVideoId
+        : getPlayableVideos(v)[0]?.videoId || '');
     }
   };
 
@@ -58,29 +66,51 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
     return unsub;
   }, [courseId]);
 
+  useEffect(() => {
+    if (initialVideoId === routeVideoIdRef.current) return;
+    routeVideoIdRef.current = initialVideoId;
+    if (initialVideoId && videos.some(video => video.videoId === initialVideoId && !video.unavailable)) {
+      setCurrentVideoId(initialVideoId);
+    }
+  }, [initialVideoId, videos]);
+
   // Check and fetch description dynamically if missing
+  const descAttemptedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!currentVideoId) return;
     setIsFav(storage.isFavorite(currentVideoId));
 
     const current = videos.find(v => v.videoId === currentVideoId);
-    if (current && (!current.description || current.description.trim() === '')) {
-      fetchVideoDescription(currentVideoId).then(desc => {
-        if (desc) {
-          const updated = videos.map(v => v.videoId === currentVideoId ? { ...v, description: desc } : v);
-          setVideos(updated);
+    if (!current || (current.description && current.description.trim() !== '')) return;
+    // One attempt per lesson: the effect also re-runs on unrelated video list
+    // changes, and a silent failure would otherwise refetch on every render.
+    if (descAttemptedRef.current.has(currentVideoId)) return;
+    descAttemptedRef.current.add(currentVideoId);
+
+    const controller = new AbortController();
+    fetchVideoDescription(currentVideoId, controller.signal)
+      .then(desc => {
+        if (!desc || controller.signal.aborted) return;
+        setVideos(currentVideos => {
+          const updated = currentVideos.map(video => video.videoId === currentVideoId ? { ...video, description: desc } : video);
           storage.saveCourseVideos(courseId, updated);
-        }
-      }).catch(() => {});
-    }
+          return updated;
+        });
+      })
+      // A missing description is not worth interrupting playback for; the panel
+      // already renders an explicit "no description available" state.
+      .catch(() => {});
+    return () => controller.abort();
   }, [currentVideoId, videos, courseId]);
 
-  const currentVideo = videos.find(v => v.videoId === currentVideoId) || videos[0];
-  const currentIndex = videos.findIndex(v => v.videoId === currentVideoId);
-  const isFirstVideo = currentIndex <= 0;
-  const isLastVideo = currentIndex >= videos.length - 1;
+  const currentVideo = videos.find(v => v.videoId === currentVideoId && !v.unavailable) || playableVideos[0];
+  const currentIndex = currentVideo ? videos.findIndex(v => v.videoId === currentVideo.videoId) : -1;
+  const playableIndex = currentVideo ? playableVideos.findIndex(v => v.videoId === currentVideo.videoId) : -1;
+  const isFirstVideo = playableIndex <= 0;
+  const isLastVideo = playableIndex < 0 || playableIndex >= playableVideos.length - 1;
 
-  const currentVideoProgress = progress.videos[currentVideoId];
+  const activeVideoId = currentVideo?.videoId || '';
+  const currentVideoProgress = progress.videos[activeVideoId];
   const isCurrentVideoCompleted = !!currentVideoProgress?.completed;
   const initialPosition = currentVideoProgress?.positionSec || 0;
 
@@ -93,39 +123,52 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
     }
   };
 
+  const handleAutoComplete = (videoId: string) => {
+    const { courseCompleteTriggered } = storage.setVideoCompleted(courseId, videoId, true);
+    setProgress(storage.getCourseProgress(courseId));
+    if (courseCompleteTriggered) setIsCourseCompleteModalOpen(true);
+  };
+
+  const handleSelectVideo = (videoId: string) => {
+    const selected = videos.find(video => video.videoId === videoId && !video.unavailable);
+    if (!selected) return;
+    setCurrentVideoId(selected.videoId);
+    setCurrentTimeSec(storage.getCourseProgress(courseId).videos[videoId]?.positionSec || 0);
+    setIsDescExpanded(false);
+    storage.touchCourse(courseId);
+    window.history.replaceState(null, '', `#/course/${courseId}?v=${selected.videoId}`);
+  };
+
   const handleNextVideo = () => {
     if (!isLastVideo) {
-      const nextVid = videos[currentIndex + 1];
+      const nextVid = playableVideos[playableIndex + 1];
       if (nextVid) {
-        setCurrentVideoId(nextVid.videoId);
+        handleSelectVideo(nextVid.videoId);
       }
     }
   };
 
   const handlePrevVideo = () => {
     if (!isFirstVideo) {
-      const prevVid = videos[currentIndex - 1];
+      const prevVid = playableVideos[playableIndex - 1];
       if (prevVid) {
-        setCurrentVideoId(prevVid.videoId);
+        handleSelectVideo(prevVid.videoId);
       }
     }
   };
 
   const handleSeek = (sec: number) => {
-    const iframe = document.querySelector('iframe');
-    if (iframe && iframe.contentWindow) {
-      iframe.contentWindow.postMessage(
-        JSON.stringify({ event: 'command', func: 'seekTo', args: [sec, true] }),
-        '*'
-      );
-    }
+    window.dispatchEvent(new CustomEvent('courseify:seek-player', { detail: sec }));
   };
+
+  // `courseify:toggle-fullscreen` (command palette) is handled by YouTubePlayer
+  // itself, so there is exactly one implementation to keep in step.
 
   const handleRewatch = () => {
     storage.resetCourseProgress(courseId);
     setProgress(storage.getCourseProgress(courseId));
-    if (videos[0]) {
-      setCurrentVideoId(videos[0].videoId);
+    if (playableVideos[0]) {
+      handleSelectVideo(playableVideos[0].videoId);
     }
     setIsCourseCompleteModalOpen(false);
     onShowToast('Course progress reset. Enjoy rewatching!');
@@ -202,13 +245,16 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
     });
   };
 
-  const metrics = storage.getCourseMetrics(courseId);
+  // Same shared computation the sidebar and dashboard use, fed from the state
+  // already in memory instead of re-reading localStorage on every render.
+  const metrics = useMemo(
+    () => computeCourseMetrics(videos, progress, course?.totalDurationSec),
+    [videos, progress, course?.totalDurationSec]
+  );
 
-  const formatDurationText = (sec: number) => {
-    const h = Math.floor(sec / 3600);
-    const m = Math.floor((sec % 3600) / 60);
-    return `${h}h ${m.toString().padStart(2, '0')}m`;
-  };
+  const totalDurationFormatted = formatDurationHuman(metrics.totalDurationSec);
+  const watchedDurationFormatted = formatDurationHuman(metrics.watchedDurationSec);
+  const sidebarTotalItemCount = course?.totalItemCount ?? course?.videoCount;
 
   if (!course) {
     return (
@@ -233,28 +279,32 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
   }
 
   return (
-    <main className="w-full pt-14 bg-bg-canvas min-h-screen text-text-primary selection:bg-accent-subtle selection:text-accent">
+    <main className="w-full pt-14 bg-bg-canvas min-h-screen text-text-primary selection:bg-accent-subtle selection:text-accent" data-testid="course-player">
       <div className="flex flex-col lg:flex-row w-full h-[calc(100vh-56px)] overflow-hidden bg-bg-canvas text-text-primary">
         {/* Main Column: Player and Content Stage */}
-        <div className="flex-1 flex flex-col h-full overflow-y-auto overflow-x-hidden">
+        <div data-testid="player-scroll-area" className="flex-1 flex flex-col h-full overflow-y-auto overflow-x-hidden">
           {/* Video Player Viewport Container with Margin & Spacing */}
-          <div className="w-full bg-bg-canvas flex justify-center px-3 py-6 sm:px-4 md:px-6">
-            <section className="relative w-full max-w-[1280px] aspect-video bg-player-black select-none shrink-0 overflow-hidden">
-              <div className="relative w-full h-full overflow-hidden bg-black courseify-player">
+          <div className="sticky top-0 z-40 w-full bg-bg-canvas lg:static">
+          <div className="w-full bg-bg-canvas flex justify-center px-0 py-0 sm:px-4 lg:px-6 lg:py-6">
+            {/* The video surface. Rounded and bordered like every other card in
+                the app so YouTube's own control bar sits on something that
+                belongs to Courseify rather than on a bare black rectangle. */}
+            <section
+              className="relative w-full max-w-[1280px] aspect-video bg-player-black shrink-0 overflow-hidden rounded-none sm:rounded-xl border-0 sm:border border-border-default shadow-none sm:shadow-sm"
+              data-testid="player-frame"
+            >
+              <div className="relative w-full h-full overflow-hidden bg-player-black courseify-player">
                 {currentVideo ? (
                   <YouTubePlayer
+                    key={`${course.id}:${currentVideo.videoId}`}
                     videoId={currentVideo.videoId}
                     courseId={course.id}
                     initialPositionSec={initialPosition}
                     autoplayNext={autoplayNext}
+                    autoCompleteThreshold={storage.getSettings().autoCompleteThreshold}
                     onNextVideo={handleNextVideo}
-                    onPrevVideo={handlePrevVideo}
                     onTimeUpdate={(cur) => setCurrentTimeSec(cur)}
-                    onAutoComplete={(vid) => {
-                      if (!progress.videos[vid]?.completed) {
-                        handleToggleComplete(vid);
-                      }
-                    }}
+                    onAutoComplete={handleAutoComplete}
                   />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center text-text-muted">
@@ -266,7 +316,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
           </div>
 
           {/* Mobile Tab Strip (Only on screens < 1024px) */}
-          <div className="lg:hidden flex flex-col bg-bg-surface border-b border-border-default sticky top-0 z-30">
+          <div className="lg:hidden flex flex-col bg-bg-surface border-b border-border-default">
             {/* Progress strip */}
             <div className="h-11 px-4 flex items-center justify-between text-xs border-b border-border-default">
               <span className="font-semibold text-text-primary">
@@ -282,10 +332,12 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
             </div>
 
             {/* Tabs */}
-            <div className="flex items-center justify-around h-11">
+            <div role="tablist" aria-label="Course workspace" className="flex items-center justify-around h-11">
               <button
                 type="button"
                 onClick={() => setActiveTabMobile('videos')}
+                role="tab"
+                aria-selected={activeTabMobile === 'videos'}
                 className={`flex-1 h-full font-semibold text-xs transition-colors flex items-center justify-center gap-1.5 border-b-2 ${
                   activeTabMobile === 'videos'
                     ? 'border-accent text-accent'
@@ -293,11 +345,13 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
                 }`}
               >
                 <span>Videos</span>
-                <span className="text-text-muted font-normal">({videos.length})</span>
+                <span className="text-text-muted font-normal">({playableVideos.length})</span>
               </button>
               <button
                 type="button"
                 onClick={() => setActiveTabMobile('notes')}
+                role="tab"
+                aria-selected={activeTabMobile === 'notes'}
                 className={`flex-1 h-full font-semibold text-xs transition-colors flex items-center justify-center gap-1.5 border-b-2 ${
                   activeTabMobile === 'notes'
                     ? 'border-accent text-accent'
@@ -308,16 +362,24 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => setActiveTabMobile('about')}
-                className={`flex-1 h-full font-semibold text-xs transition-colors flex items-center justify-center gap-1.5 border-b-2 ${
-                  activeTabMobile === 'about'
-                    ? 'border-accent text-accent'
-                    : 'border-transparent text-text-secondary hover:text-text-primary'
-                }`}
+                onClick={() => setActiveTabMobile('ai')}
+                aria-selected={activeTabMobile === 'ai'}
+                role="tab"
+                className={`flex-1 h-full font-semibold text-xs transition-colors flex items-center justify-center gap-1.5 border-b-2 ${activeTabMobile === 'ai' ? 'border-accent text-accent' : 'border-transparent text-text-secondary hover:text-text-primary'}`}
               >
-                <span>About</span>
+                <span>AI Notes</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTabMobile('flashcards')}
+                aria-selected={activeTabMobile === 'flashcards'}
+                role="tab"
+                className={`flex-1 h-full font-semibold text-xs transition-colors flex items-center justify-center gap-1.5 border-b-2 ${activeTabMobile === 'flashcards' ? 'border-accent text-accent' : 'border-transparent text-text-secondary hover:text-text-primary'}`}
+              >
+                <span>Flashcards</span>
               </button>
             </div>
+          </div>
           </div>
 
           {/* Desktop Content Stage or Active Mobile Tab Content */}
@@ -325,10 +387,10 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
             {/* Title & Primary Header Row */}
             <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pb-6">
               <div className="min-w-0 flex-1">
-                <h1 className="text-xl sm:text-2xl font-bold text-text-primary tracking-tight font-title">
+                <h1 className="text-xl sm:text-2xl font-bold text-text-primary tracking-tight font-title" data-testid="current-lesson-title">
                   {currentVideo?.title}
                 </h1>
-                <div className="flex items-center gap-3 mt-1.5 text-xs text-text-secondary">
+                <div className="flex items-center gap-3 mt-1.5 text-xs text-text-secondary" data-testid="lesson-progress">
                   <span className="font-medium text-text-primary">
                     Video {currentIndex + 1} of {videos.length}
                   </span>
@@ -405,7 +467,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
             {/* Mobile Tab Conditionals or Desktop Default view */}
             <div className="lg:block">
               {/* Description Block */}
-              <div className={`pt-6 border-t border-border-default flex flex-col ${activeTabMobile !== 'about' ? 'hidden lg:flex' : 'flex'}`}>
+              <div className="hidden lg:flex pt-6 border-t border-border-default flex-col">
                 <div
                   id="descContent"
                   className={`text-sm text-text-secondary leading-relaxed transition-all whitespace-pre-line ${
@@ -440,6 +502,17 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
                 )}
               </div>
 
+              <div className={`${activeTabMobile !== 'ai' && activeTabMobile !== 'flashcards' ? 'hidden lg:block' : 'block'}`}>
+                {currentVideo && <AISessionNotes
+                  courseId={course.id}
+                  video={currentVideo}
+                  onSeek={handleSeek}
+                  onOpenKeySettings={() => window.dispatchEvent(new Event('courseify:open-gemini-settings'))}
+                  onShowToast={onShowToast}
+                  initialTab={activeTabMobile === 'flashcards' ? 'flashcards' : 'summary'}
+                />}
+              </div>
+
               {/* Mobile Videos Tab Content */}
               <div className={`lg:hidden mt-4 ${activeTabMobile === 'videos' ? 'block' : 'hidden'}`}>
                 <PlaylistSidebar
@@ -448,15 +521,16 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
                   notes={notes}
                   currentVideoId={currentVideoId}
                   autoplayNext={autoplayNext}
-                  onSelectVideo={(vid) => setCurrentVideoId(vid)}
+                  onSelectVideo={handleSelectVideo}
                   onToggleComplete={handleToggleComplete}
                   onToggleAutoplay={() => {
                     const nextVal = !autoplayNext;
                     setAutoplayNext(nextVal);
                     storage.saveSettings({ ...storage.getSettings(), autoplayNext: nextVal });
                   }}
-                  totalDurationFormatted={course.totalDurationFormatted || formatDurationText(metrics.totalDurationSec)}
-                  watchedDurationFormatted={formatDurationText(metrics.watchedDurationSec)}
+                  totalDurationFormatted={totalDurationFormatted}
+                  watchedDurationFormatted={watchedDurationFormatted}
+                  totalItemCount={sidebarTotalItemCount}
                 />
               </div>
             </div>
@@ -471,15 +545,16 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
             notes={notes}
             currentVideoId={currentVideoId}
             autoplayNext={autoplayNext}
-            onSelectVideo={(vid) => setCurrentVideoId(vid)}
+            onSelectVideo={handleSelectVideo}
             onToggleComplete={handleToggleComplete}
             onToggleAutoplay={() => {
               const nextVal = !autoplayNext;
               setAutoplayNext(nextVal);
               storage.saveSettings({ ...storage.getSettings(), autoplayNext: nextVal });
             }}
-            totalDurationFormatted={course.totalDurationFormatted || formatDurationText(metrics.totalDurationSec)}
-            watchedDurationFormatted={formatDurationText(metrics.watchedDurationSec)}
+            totalDurationFormatted={totalDurationFormatted}
+            watchedDurationFormatted={watchedDurationFormatted}
+            totalItemCount={sidebarTotalItemCount}
           />
         </div>
       </div>

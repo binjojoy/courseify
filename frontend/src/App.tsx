@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { storage } from './services/storage';
-import { Course } from './types';
+import { Course, ViewMode } from './types';
 import { Navbar } from './components/Navbar';
 import { HomePage } from './pages/HomePage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -8,15 +8,21 @@ import { PlayerPage } from './pages/PlayerPage';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { NamePromptModal } from './components/NamePromptModal';
 import { Toast } from './components/Toast';
+import { fetchPlaylist } from './services/api';
+import { getPlayableVideos } from './utils/course';
 
 import { PrivacyPage } from './pages/PrivacyPage';
 import { TermsPage } from './pages/TermsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
-
-type ViewMode = 'home' | 'dashboard' | 'player' | 'privacy' | 'terms' | 'notfound';
+import { AuditPage } from './pages/AuditPage';
+import { GeminiKeyModal } from './components/GeminiKeyModal';
+import { CommandPalette } from './components/CommandPalette';
+import { LoadingScreen } from './components/LoadingScreen';
+import { ReleaseNotesModal } from './components/ReleaseNotesModal';
+import { APP_VERSION, RELEASE_NOTICE_KEY } from './config/app';
 
 export const App: React.FC = () => {
-  // Always start on create course page ('home' / '#/add') by default
+  // Route selection is resolved after persisted courses are available.
   const [currentView, setCurrentView] = useState<ViewMode>('home');
   const [activeCourseId, setActiveCourseId] = useState<string>('');
   const [activeVideoId, setActiveVideoId] = useState<string | undefined>(undefined);
@@ -26,28 +32,41 @@ export const App: React.FC = () => {
   const [removeTargetCourse, setRemoveTargetCourse] = useState<Course | null>(null);
   const [isClearDataOpen, setIsClearDataOpen] = useState(false);
   const [isNamePromptOpen, setIsNamePromptOpen] = useState(false);
+  const [isGeminiKeyModalOpen, setIsGeminiKeyModalOpen] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastUndoAction, setToastUndoAction] = useState<{ label: string; onUndo: () => void; durationMs?: number } | null>(null);
+  const [isBooting, setIsBooting] = useState(true);
+  const [isReleaseNotesOpen, setIsReleaseNotesOpen] = useState(false);
 
   // Parse location hash on load and hashchange
   const parseRoute = () => {
     const rawHash = window.location.hash;
     const hash = rawHash.replace(/^#\/?/, '');
 
-    if (!hash || hash === 'add' || hash === 'home' || hash === 'import') {
-      // Default / root page is create course page ('#/add')
-      if (window.location.hash !== '#/add') {
-        window.location.hash = '#/add';
-      }
+    if (!hash) {
+      const nextHash = storage.getCourses().length > 0 ? '#/dashboard' : '#/add';
+      window.history.replaceState(null, '', nextHash);
+      setCurrentView(nextHash === '#/dashboard' ? 'dashboard' : 'home');
+      return;
+    }
+
+    if (hash === 'add' || hash === 'home' || hash === 'import') {
       setCurrentView('home');
+      return;
+    }
+
+    if (hash === '__audit' && import.meta.env.DEV) {
+      setCurrentView('audit');
       return;
     }
 
     if (hash.startsWith('course/')) {
       const parts = hash.split('?');
-      const courseId = parts[0].replace('course/', '');
+      const routeParts = parts[0].split('/');
+      const courseId = routeParts[1];
       const searchParams = new URLSearchParams(parts[1] || '');
-      const videoId = searchParams.get('v') || undefined;
+      const videoId = routeParts[2] === 'lesson' ? routeParts[3] : searchParams.get('v') || undefined;
 
       const course = storage.getCourse(courseId);
       if (!course) {
@@ -55,8 +74,14 @@ export const App: React.FC = () => {
         return;
       }
 
+      const videos = storage.getCourseVideos(courseId);
+      const fallback = storage.getCourseProgress(courseId).lastVideoId || getPlayableVideos(videos)[0]?.videoId;
+      const selectedVideoId = videoId && videos.some(video => video.videoId === videoId && !video.unavailable) ? videoId : fallback;
       setActiveCourseId(courseId);
-      setActiveVideoId(videoId);
+      setActiveVideoId(selectedVideoId);
+      if (selectedVideoId && selectedVideoId !== videoId) {
+        window.history.replaceState(null, '', `#/course/${courseId}?v=${selectedVideoId}`);
+      }
       setCurrentView('player');
     } else if (hash === 'dashboard') {
       setCurrentView('dashboard');
@@ -78,16 +103,51 @@ export const App: React.FC = () => {
       document.documentElement.classList.remove('dark');
     }
 
-    parseRoute();
+    const bootTimer = window.setTimeout(() => {
+      parseRoute();
+      setIsBooting(false);
+      setIsReleaseNotesOpen(localStorage.getItem(RELEASE_NOTICE_KEY) !== APP_VERSION);
+    }, 260);
     window.addEventListener('hashchange', parseRoute);
-    return () => window.removeEventListener('hashchange', parseRoute);
+    const openGeminiSettings = () => setIsGeminiKeyModalOpen(true);
+    window.addEventListener('courseify:open-gemini-settings', openGeminiSettings);
+    return () => {
+      window.removeEventListener('hashchange', parseRoute);
+      window.removeEventListener('courseify:open-gemini-settings', openGeminiSettings);
+      window.clearTimeout(bootTimer);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleCommandShortcut = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'k' || target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+      event.preventDefault();
+      setIsCommandPaletteOpen(true);
+    };
+    window.addEventListener('keydown', handleCommandShortcut);
+    return () => window.removeEventListener('keydown', handleCommandShortcut);
+  }, []);
+
+  // Storage refuses (usually a full quota). A note or a progress write that
+  // silently vanished is worse than a noisy message, so surface it once.
+  useEffect(() => {
+    const handleStorageError = (event: Event) => {
+      const detail = (event as CustomEvent<{ message?: string }>).detail;
+      setToastUndoAction(null);
+      setToastMessage(detail?.message || 'A change could not be saved in this browser.');
+      window.setTimeout(() => setToastMessage(null), 6000);
+    };
+    window.addEventListener('courseify:storage-error', handleStorageError);
+    return () => window.removeEventListener('courseify:storage-error', handleStorageError);
   }, []);
 
   const navigateTo = (view: ViewMode, courseId?: string, videoId?: string) => {
     if (view === 'player' && courseId) {
       setActiveCourseId(courseId);
       setActiveVideoId(videoId);
-      window.location.hash = `#/course/${courseId}${videoId ? `?v=${videoId}` : ''}`;
+      const route = `#/course/${courseId}${videoId ? `?v=${videoId}` : ''}`;
+      window.location.hash = route;
     } else if (view === 'dashboard') {
       window.location.hash = '#/dashboard';
     } else if (view === 'home') {
@@ -96,6 +156,43 @@ export const App: React.FC = () => {
       window.location.hash = '#/privacy';
     } else if (view === 'terms') {
       window.location.hash = '#/terms';
+    }
+  };
+
+  const handleRefreshPlaylist = async () => {
+    if (!activeCourse?.source?.url) {
+      showToast('This course has no saved source URL to refresh.');
+      return;
+    }
+    try {
+      const refreshed = await fetchPlaylist(activeCourse.source.url);
+      const oldVideos = storage.getCourseVideos(activeCourse.id);
+      const refreshedIds = new Set(refreshed.videos.map(video => video.videoId));
+      // Lessons the source dropped are kept and flagged, so existing progress
+      // and notes for them are not silently destroyed.
+      const removed = oldVideos
+        .filter(video => !refreshedIds.has(video.videoId))
+        .map(video => ({ ...video, unavailable: true }));
+      const saved = storage.addCourseWithVideos({
+        ...refreshed.course,
+        id: activeCourse.id,
+        videoCount: getPlayableVideos(refreshed.videos).length,
+        addedAt: activeCourse.addedAt,
+        lastOpenedAt: new Date().toISOString(),
+        source: activeCourse.source
+      }, [...refreshed.videos, ...removed]);
+      if (!saved) {
+        showToast('Could not save the refreshed playlist - this browser is out of storage space.');
+        return;
+      }
+      const newCount = removed.length;
+      showToast(newCount > 0
+        ? `Playlist refreshed. ${newCount} lesson${newCount === 1 ? '' : 's'} no longer available.`
+        : 'Playlist refreshed successfully.');
+    } catch (error: unknown) {
+      showToast(error instanceof Error && error.message
+        ? error.message
+        : 'Could not refresh this playlist.');
     }
   };
 
@@ -128,6 +225,7 @@ export const App: React.FC = () => {
     const videosToRestore = storage.getCourseVideos(courseToRestore.id);
     const progressToRestore = storage.getCourseProgress(courseToRestore.id);
     const notesToRestore = storage.getCourseNotes(courseToRestore.id);
+    const favoritesToRestore = storage.getFavorites().filter(favorite => favorite.courseId === courseToRestore.id);
 
     // Remove from storage
     storage.removeCourse(courseToRestore.id);
@@ -153,6 +251,7 @@ export const App: React.FC = () => {
         if (notesToRestore && Object.keys(notesToRestore).length > 0) {
           storage.saveCourseNotes(courseToRestore.id, notesToRestore);
         }
+        storage.saveFavorites([...storage.getFavorites().filter(favorite => favorite.courseId !== courseToRestore.id), ...favoritesToRestore]);
         showToast(`Course "${courseToRestore.title}" restored!`);
         // Trigger re-render by refreshing view or dispatching event
         window.dispatchEvent(new Event('storage'));
@@ -161,6 +260,20 @@ export const App: React.FC = () => {
   };
 
   const activeCourse = activeCourseId ? storage.getCourse(activeCourseId) : null;
+
+  const toggleTheme = () => {
+    const settings = storage.getSettings();
+    const theme = settings.theme === 'dark' ? 'light' : 'dark';
+    storage.saveSettings({ ...settings, theme });
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+  };
+
+  const dismissReleaseNotes = () => {
+    localStorage.setItem(RELEASE_NOTICE_KEY, APP_VERSION);
+    setIsReleaseNotesOpen(false);
+  };
+
+  if (isBooting) return <LoadingScreen />;
 
   return (
     <div className="min-h-screen flex flex-col bg-bg-canvas text-text-primary">
@@ -175,10 +288,10 @@ export const App: React.FC = () => {
           const c = storage.getCourse(cId);
           if (c) setRemoveTargetCourse(c);
         }}
-        onRefreshPlaylist={() => {
-          showToast('Playlist is synced with YouTube.');
-        }}
+        onRefreshPlaylist={handleRefreshPlaylist}
         onOpenClearData={() => setIsClearDataOpen(true)}
+        onOpenGeminiSettings={() => setIsGeminiKeyModalOpen(true)}
+        onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
         onShowToast={showToast}
       />
 
@@ -220,6 +333,9 @@ export const App: React.FC = () => {
           onGoDashboard={() => navigateTo('dashboard')}
         />
       )}
+      {currentView === 'audit' && import.meta.env.DEV && (
+        <AuditPage onNavigate={navigateTo} />
+      )}
       </div>
 
       {/* Reset Progress Confirmation Dialog */}
@@ -229,6 +345,7 @@ export const App: React.FC = () => {
         body={`All completed videos and resume positions for "${resetTargetCourse?.title || ''}" will be cleared. Your notes are kept.`}
         confirmLabel="Reset progress"
         isDestructive={true}
+        icon="restart_alt"
         onConfirm={handleConfirmReset}
         onCancel={() => setResetTargetCourse(null)}
       />
@@ -280,6 +397,31 @@ export const App: React.FC = () => {
           setToastUndoAction(null);
         }}
       />
+      <GeminiKeyModal
+        isOpen={isGeminiKeyModalOpen}
+        onClose={() => setIsGeminiKeyModalOpen(false)}
+        onShowToast={showToast}
+      />
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        courses={storage.getCourses()}
+        onNavigate={(courseId, videoId) => navigateTo('player', courseId, videoId)}
+        onOpenGeminiSettings={() => setIsGeminiKeyModalOpen(true)}
+        onToggleTheme={toggleTheme}
+        currentView={currentView}
+        onShowToast={showToast}
+      />
+      <CommandPaletteOpener onOpen={() => setIsCommandPaletteOpen(true)} />
+      <ReleaseNotesModal isOpen={isReleaseNotesOpen} onClose={dismissReleaseNotes} />
     </div>
   );
+};
+
+const CommandPaletteOpener: React.FC<{ onOpen: () => void }> = ({ onOpen }) => {
+  useEffect(() => {
+    window.addEventListener('courseify:open-command-palette', onOpen);
+    return () => window.removeEventListener('courseify:open-command-palette', onOpen);
+  }, [onOpen]);
+  return null;
 };

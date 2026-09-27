@@ -1,12 +1,29 @@
-import React, { useState, useEffect } from 'react';
-import { Course, FavoriteVideo } from '../types';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { Course, FavoriteVideo, NavigateFn } from '../types';
 import { storage } from '../services/storage';
 import { CourseCard } from '../components/CourseCard';
 import { ContinueLearningBanner } from '../components/ContinueLearningBanner';
-import { fetchPlaylist, ApiError } from '../services/api';
+import { fetchPlaylist, ApiError, getYouTubeSource } from '../services/api';
+import { getCourseSourceKey } from '../utils/course';
+import { useFocusTrap } from '../hooks/useFocusTrap';
+import { clampPercent, type CourseMetrics } from '../utils/progress';
+
+/** Days without an export before the dashboard asks for one again. */
+const BACKUP_REMINDER_DAYS = 14;
+
+/** Fallback for the impossible "listed course with no metrics" case. */
+const EMPTY_METRICS: CourseMetrics = {
+  totalVideos: 0,
+  completedVideos: 0,
+  completionPercent: 0,
+  totalDurationSec: 0,
+  watchedDurationSec: 0,
+  isCompleted: false,
+  lastVideoId: ''
+};
 
 interface DashboardPageProps {
-  onNavigate: (view: 'home' | 'dashboard' | 'player', courseId?: string, videoId?: string) => void;
+  onNavigate: NavigateFn;
   onOpenResetConfirm: (course: Course) => void;
   onOpenRemoveConfirm: (course: Course) => void;
   onShowToast: (msg: string) => void;
@@ -26,12 +43,17 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const [stats, setStats] = useState(storage.getLearningStats());
   const [favorites, setFavorites] = useState<FavoriteVideo[]>(storage.getFavorites());
   const [isFavoritesExpanded, setIsFavoritesExpanded] = useState(false);
+  const [lastBackupAt, setLastBackupAt] = useState<string | null>(() => storage.getLastBackupAt());
+  const [isBackupReminderDismissed, setIsBackupReminderDismissed] = useState(false);
 
   // Quick Add Course Form in Dashboard
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [quickUrl, setQuickUrl] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  const quickAddAbortRef = useRef<AbortController | null>(null);
+  const quickAddSubmittingRef = useRef(false);
+  const sortMenuRef = useRef<HTMLDivElement>(null);
 
   // Focus Timer / Goal
   const [dailyGoalMinutes, setDailyGoalMinutes] = useState<number>(
@@ -40,46 +62,111 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [tempGoalMinutes, setTempGoalMinutes] = useState(dailyGoalMinutes);
 
-  const loadData = () => {
+  const quickAddDialogRef = useFocusTrap<HTMLDivElement>(isQuickAddOpen);
+  const goalDialogRef = useFocusTrap<HTMLDivElement>(isGoalModalOpen);
+
+  const loadData = useCallback(() => {
     setCourses(storage.getCourses());
     setProfile(storage.getProfile());
     setRecentNotes(storage.getRecentNotes(3));
     setStats(storage.getLearningStats());
     setFavorites(storage.getFavorites());
-  };
+    setLastBackupAt(storage.getLastBackupAt());
+  }, []);
 
   useEffect(() => {
     loadData();
     const unsub = storage.subscribe(loadData);
     return unsub;
+  }, [loadData]);
+
+  // Dismiss the sort menu on Escape or an outside click.
+  useEffect(() => {
+    if (!isSortMenuOpen) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsSortMenuOpen(false);
+    };
+    const onPointerDown = (event: MouseEvent) => {
+      if (sortMenuRef.current && !sortMenuRef.current.contains(event.target as Node)) {
+        setIsSortMenuOpen(false);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('mousedown', onPointerDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('mousedown', onPointerDown);
+    };
+  }, [isSortMenuOpen]);
+
+  /** Close the quick-add dialog and abandon any fetch behind it. */
+  const closeQuickAdd = useCallback(() => {
+    quickAddAbortRef.current?.abort();
+    quickAddAbortRef.current = null;
+    quickAddSubmittingRef.current = false;
+    setIsAdding(false);
+    setIsQuickAddOpen(false);
   }, []);
 
   const handleQuickAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (quickAddSubmittingRef.current) return;
     const val = quickUrl.trim();
     if (!val) return;
+    const source = getYouTubeSource(val);
+    if (!source) {
+      setAddError('Enter a valid YouTube playlist or video URL.');
+      return;
+    }
+    const duplicate = storage.getCourses().find(course => getCourseSourceKey(course) === `${source.type}:${source.id}` || course.id === source.id || course.id === `video_${source.id}`);
+    if (duplicate) {
+      setAddError('This source is already in your courses.');
+      return;
+    }
 
+    quickAddSubmittingRef.current = true;
     setIsAdding(true);
     setAddError(null);
+    const controller = new AbortController();
+    quickAddAbortRef.current = controller;
 
     try {
-      const { course, videos } = await fetchPlaylist(val);
-      storage.addOrUpdateCourse(course);
-      storage.saveCourseVideos(course.id, videos);
+      const { course, videos } = await fetchPlaylist(val, controller.signal);
+      if (!storage.addCourseWithVideos(course, videos)) {
+        throw new ApiError(
+          'STORAGE_FULL',
+          'This browser is out of storage space for the course. Remove a course or clear data, then try again.'
+        );
+      }
       onShowToast(`Course "${course.title}" added successfully!`);
       setQuickUrl('');
       setIsQuickAddOpen(false);
       onNavigate('player', course.id);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      if (err instanceof ApiError && err.code === 'CANCELLED') return;
       if (err instanceof ApiError) {
         setAddError(err.message);
       } else {
-        setAddError(err.message || "Couldn't reach YouTube. Check link and try again.");
+        setAddError(err instanceof Error && err.message
+          ? err.message
+          : "Couldn't reach YouTube. Check the link and try again.");
       }
     } finally {
+      quickAddAbortRef.current = null;
+      quickAddSubmittingRef.current = false;
       setIsAdding(false);
     }
   };
+
+  const handleCancelQuickAdd = () => {
+    quickAddAbortRef.current?.abort();
+    quickAddAbortRef.current = null;
+    quickAddSubmittingRef.current = false;
+    setIsAdding(false);
+    setAddError(null);
+  };
+
+  useEffect(() => () => quickAddAbortRef.current?.abort(), []);
 
   const handleSaveGoal = () => {
     setDailyGoalMinutes(tempGoalMinutes);
@@ -88,8 +175,46 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     onShowToast(`Daily focus goal set to ${tempGoalMinutes} minutes.`);
   };
 
+  /**
+   * Completion metrics for every course, read once per data change.
+   *
+   * These used to be recomputed inside the sort comparator and the "continue
+   * learning" lookup, which meant up to n*log(n) complete localStorage reads
+   * (each one a JSON.parse of the whole lesson list) on every render.
+   */
+  const metricsByCourseId = useMemo(() => {
+    const map = new Map<string, CourseMetrics>();
+    for (const course of courses) {
+      map.set(course.id, storage.getCourseMetrics(course.id));
+    }
+    return map;
+  }, [courses]);
+
+  /**
+   * Title of the lesson each card should offer as "continue where you left
+   * off". Resolved here, alongside the metrics, so CourseCard stays free of
+   * localStorage reads.
+   */
+  const resumeTitleByCourseId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const course of courses) {
+      const videos = storage.getCourseVideos(course.id);
+      const lastVideoId = metricsByCourseId.get(course.id)?.lastVideoId;
+      const match = videos.find(v => v.videoId === lastVideoId) || videos[0];
+      map.set(course.id, match?.title || '');
+    }
+    return map;
+  }, [courses, metricsByCourseId]);
+
+  const continueCourse = useMemo(() => {
+    const byRecency = [...courses].sort((a, b) =>
+      new Date(b.lastOpenedAt || b.addedAt).getTime() - new Date(a.lastOpenedAt || a.addedAt).getTime()
+    );
+    return byRecency.find(course => !metricsByCourseId.get(course.id)?.isCompleted);
+  }, [courses, metricsByCourseId]);
+
   // Sort courses
-  const sortedCourses = [...courses].sort((a, b) => {
+  const sortedCourses = useMemo(() => [...courses].sort((a, b) => {
     if (sortOption === 'recently_watched') {
       const timeA = new Date(a.lastOpenedAt || a.addedAt).getTime();
       const timeB = new Date(b.lastOpenedAt || b.addedAt).getTime();
@@ -99,20 +224,15 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       return new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime();
     }
     if (sortOption === 'progress') {
-      const pA = storage.getCourseMetrics(a.id).completionPercent;
-      const pB = storage.getCourseMetrics(b.id).completionPercent;
+      const pA = metricsByCourseId.get(a.id)?.completionPercent ?? 0;
+      const pB = metricsByCourseId.get(b.id)?.completionPercent ?? 0;
       return pB - pA;
     }
     if (sortOption === 'title') {
       return a.title.localeCompare(b.title);
     }
     return 0;
-  });
-
-  const continueCourse = sortedCourses.find(c => {
-    const metrics = storage.getCourseMetrics(c.id);
-    return !metrics.isCompleted;
-  }) || sortedCourses[0];
+  }), [courses, sortOption, metricsByCourseId]);
 
   const handleOpenCourse = (courseId: string, videoId?: string) => {
     onNavigate('player', courseId, videoId);
@@ -127,10 +247,37 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     }
   };
 
-  const goalProgressPercent = Math.min(100, Math.round((stats.dailyMinutesStudied / (dailyGoalMinutes || 60)) * 100));
+  const goalProgressPercent = clampPercent((stats.dailyMinutesStudied / (dailyGoalMinutes || 60)) * 100);
+
+  // Escape closes either overlay; the backdrop does too.
+  useEffect(() => {
+    if (!isQuickAddOpen && !isGoalModalOpen) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (isQuickAddOpen) closeQuickAdd();
+      else setIsGoalModalOpen(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [isQuickAddOpen, isGoalModalOpen, closeQuickAdd]);
+
+  /**
+   * Everything lives in this browser, so a cleared profile or a new device means
+   * the library is gone. Show a reminder rather than relying on memory.
+   */
+  const backupReminder = useMemo(() => {
+    if (courses.length === 0 || isBackupReminderDismissed) return null;
+    if (!lastBackupAt) {
+      return 'You have not exported a backup yet. Your courses, progress and notes only exist in this browser.';
+    }
+    const ageDays = (Date.now() - Date.parse(lastBackupAt)) / 86_400_000;
+    if (ageDays < BACKUP_REMINDER_DAYS) return null;
+    const lastBackupDate = new Date(lastBackupAt).toLocaleDateString();
+    return `Your last backup was exported on ${lastBackupDate}. Exporting again keeps it current.`;
+  }, [courses.length, isBackupReminderDismissed, lastBackupAt]);
 
   return (
-    <main className="w-full pt-14 bg-bg-canvas min-h-screen">
+    <main className="w-full pt-14 bg-bg-canvas min-h-screen" data-testid="dashboard">
       <div className="w-full max-w-[1240px] mx-auto px-4 md:px-6 lg:px-8 pb-16">
         {/* 1. Page Header */}
         <header className="pt-10 pb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -159,35 +306,75 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           </div>
         </header>
 
+        {/* Backup reminder: this app has no server copy of the user's library */}
+        {backupReminder && (
+          <div
+            role="status"
+            className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-text-primary animate-fadeIn"
+          >
+            <span className="material-symbols-outlined text-[20px] text-amber-500" aria-hidden="true">backup</span>
+            <p className="flex-1 min-w-[220px] leading-relaxed">{backupReminder}</p>
+            <button
+              type="button"
+              onClick={() => onNavigate('home')}
+              className="h-8 px-3 rounded-lg bg-accent text-white text-xs font-semibold hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              How to back up
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsBackupReminderDismissed(true)}
+              aria-label="Dismiss backup reminder"
+              className="text-text-muted hover:text-text-primary transition-colors"
+            >
+              <span className="material-symbols-outlined text-[18px]" aria-hidden="true">close</span>
+            </button>
+          </div>
+        )}
+
         {/* Add Course Modal (Centered with Backdrop Blur) */}
         {isQuickAddOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fadeIn">
-            <div className="w-full max-w-lg bg-bg-surface dark:bg-[#0F172A] rounded-2xl border border-border-default dark:border-slate-800 p-6 sm:p-7 shadow-2xl animate-scaleUp">
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fadeIn"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) closeQuickAdd();
+            }}
+          >
+            <div
+              ref={quickAddDialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="quick-add-title"
+              tabIndex={-1}
+              className="w-full max-w-lg bg-bg-surface dark:bg-[#0F172A] rounded-2xl border border-border-default dark:border-slate-800 p-6 sm:p-7 shadow-2xl animate-scaleUp"
+            >
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2.5">
                   <div className="w-9 h-9 rounded-xl bg-accent-subtle dark:bg-blue-950/60 text-accent flex items-center justify-center">
                     <span className="material-symbols-outlined text-[20px]">add_link</span>
                   </div>
                   <div>
-                    <h3 className="font-bold text-text-primary text-base">Add New Course</h3>
+                    <h3 id="quick-add-title" className="font-bold text-text-primary text-base">Add New Course</h3>
                     <p className="text-xs text-text-muted mt-0.5">Turn any YouTube playlist or video into a course</p>
                   </div>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setIsQuickAddOpen(false)}
+                  onClick={closeQuickAdd}
+                  aria-label="Close add course dialog"
                   className="text-text-muted hover:text-text-primary p-1.5 rounded-lg hover:bg-bg-hover transition-colors"
                 >
                   <span className="material-symbols-outlined text-[20px]">close</span>
                 </button>
               </div>
 
-              <form onSubmit={handleQuickAddSubmit} className="flex flex-col gap-4 mt-2">
+              <form onSubmit={handleQuickAddSubmit} aria-label="Add a YouTube course from the dashboard" className="flex flex-col gap-4 mt-2">
                 <div className="flex flex-col gap-1.5">
                   <label htmlFor="quick-course-url" className="text-xs font-semibold text-text-secondary">
                     YouTube URL
                   </label>
                   <input
+                    data-testid="quick-playlist-url-input"
                     id="quick-course-url"
                     type="url"
                     value={quickUrl}
@@ -203,7 +390,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 </div>
 
                 {addError && (
-                  <div className="text-error text-xs flex items-center gap-1.5 font-medium animate-fadeIn bg-error/10 p-2.5 rounded-lg border border-error/20">
+                  <div role="alert" aria-live="assertive" className="text-error text-xs flex items-center gap-1.5 font-medium animate-fadeIn bg-error/10 p-2.5 rounded-lg border border-error/20">
                     <span className="material-symbols-outlined text-[16px] shrink-0">error</span>
                     <span>{addError}</span>
                   </div>
@@ -212,10 +399,10 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 <div className="flex items-center justify-end gap-2.5 pt-2">
                   <button
                     type="button"
-                    onClick={() => setIsQuickAddOpen(false)}
+                    onClick={() => isAdding ? handleCancelQuickAdd() : setIsQuickAddOpen(false)}
                     className="h-10 px-4 rounded-xl border border-border-default dark:border-slate-800 text-text-primary text-xs font-semibold hover:bg-bg-hover transition-colors"
                   >
-                    Cancel
+                    {isAdding ? 'Cancel fetch' : 'Cancel'}
                   </button>
                   <button
                     type="submit"
@@ -284,22 +471,27 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 </div>
 
                 {/* Sort Dropdown */}
-                <div className="relative">
+                <div className="relative" ref={sortMenuRef}>
                   <button
                     type="button"
                     onClick={() => setIsSortMenuOpen(!isSortMenuOpen)}
+                    aria-expanded={isSortMenuOpen}
+                    aria-haspopup="menu"
                     className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-bg-surface text-text-primary text-xs font-medium hover:bg-bg-hover transition-colors shadow-xs border border-border-default focus:outline-none"
                   >
                     <span className="text-text-muted">Sort:</span>
                     <span>{getSortLabel()}</span>
-                    <span className="material-symbols-outlined text-[16px] text-text-secondary">expand_more</span>
+                    <span className="material-symbols-outlined text-[16px] text-text-secondary" aria-hidden="true">expand_more</span>
                   </button>
 
                   {isSortMenuOpen && (
-                    <div className="absolute right-0 mt-2 w-48 bg-bg-elevated rounded-lg shadow-xl border border-border-default p-1 text-sm z-30 animate-fadeIn">
+                    <div role="menu" aria-label="Sort courses" className="absolute right-0 mt-2 w-48 bg-bg-elevated rounded-lg shadow-xl border border-border-default p-1 text-sm z-30 animate-fadeIn">
                       {(['recently_watched', 'recently_added', 'progress', 'title'] as const).map((opt) => (
                         <button
                           key={opt}
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={sortOption === opt}
                           onClick={() => {
                             setSortOption(opt);
                             setIsSortMenuOpen(false);
@@ -325,6 +517,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   <CourseCard
                     key={course.id}
                     course={course}
+                    metrics={metricsByCourseId.get(course.id) ?? EMPTY_METRICS}
+                    lastVideoTitle={resumeTitleByCourseId.get(course.id) ?? ''}
                     onOpen={handleOpenCourse}
                     onResetProgress={onOpenResetConfirm}
                     onRemoveCourse={onOpenRemoveConfirm}
@@ -353,36 +547,39 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             {/* 4. Favorites Expandable List Section */}
             {favorites.length > 0 && (
               <section className="mt-12 bg-bg-surface rounded-2xl p-6 border border-border-default shadow-xs">
-                <div className="flex items-center justify-between mb-4 cursor-pointer" onClick={() => setIsFavoritesExpanded(!isFavoritesExpanded)}>
+                  <button type="button" aria-expanded={isFavoritesExpanded} aria-controls="favorites-list" onClick={() => setIsFavoritesExpanded(!isFavoritesExpanded)} className="w-full flex items-center justify-between mb-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
                   <div className="flex items-center gap-2.5">
-                    <span className="material-symbols-outlined text-amber-500 text-[22px]" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
+                    <span className="material-symbols-outlined text-amber-500 text-[22px]" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">star</span>
                     <h2 className="text-lg font-bold text-text-primary">
                       Favorited Lessons ({favorites.length})
                     </h2>
                   </div>
-                  <button type="button" className="text-text-muted hover:text-text-primary flex items-center gap-1 text-xs font-medium">
+                  {/* A <span>, not a nested <button>: the browser hoists a nested
+                      button out of its parent, which broke the whole header. */}
+                  <span className="text-text-muted hover:text-text-primary flex items-center gap-1 text-xs font-medium">
                     <span>{isFavoritesExpanded ? 'Collapse' : 'Expand'}</span>
-                    <span className="material-symbols-outlined text-[18px]">
+                    <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
                       {isFavoritesExpanded ? 'expand_less' : 'expand_more'}
                     </span>
-                  </button>
-                </div>
+                  </span>
+                </button>
 
                 {isFavoritesExpanded && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-2 animate-fadeIn">
+                  <div id="favorites-list" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-2 animate-fadeIn">
                     {favorites.map((fav) => (
-                      <div
+                      <button
+                        type="button"
                         key={fav.videoId}
                         onClick={() => onNavigate('player', fav.courseId, fav.videoId)}
-                        className="flex items-center gap-3 p-3 rounded-xl bg-bg-canvas hover:bg-bg-hover transition-colors cursor-pointer border border-border-default/70 group"
+                        className="w-full text-left flex items-center gap-3 p-3 rounded-xl bg-bg-canvas hover:bg-bg-hover transition-colors border border-border-default/70 group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                       >
                         <div className="w-16 h-10 rounded-md overflow-hidden bg-black shrink-0 relative">
                           <img src={fav.thumbnailUrl} alt={fav.title} className="w-full h-full object-cover" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <h4 className="text-xs font-semibold text-text-primary truncate group-hover:text-accent transition-colors">
+                          <span className="block text-xs font-semibold text-text-primary truncate group-hover:text-accent transition-colors">
                             {fav.title}
-                          </h4>
+                          </span>
                           <span className="text-[11px] text-text-muted block truncate mt-0.5">
                             {fav.courseTitle} • {fav.durationFormatted}
                           </span>
@@ -390,7 +587,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                         <span className="material-symbols-outlined text-[18px] text-text-muted group-hover:text-accent shrink-0">
                           play_circle
                         </span>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 )}
@@ -420,10 +617,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 ) : (
                   <div className="flex flex-col gap-3.5">
                     {recentNotes.map((note, idx) => (
-                      <article
+                      <button
+                        type="button"
                         key={idx}
                         onClick={() => onNavigate('player', note.courseId, note.videoId)}
-                        className="p-4 rounded-xl bg-bg-canvas hover:bg-bg-hover transition-colors cursor-pointer border border-border-default/60 dark:border-slate-800/80 group"
+                        className="w-full text-left p-4 rounded-xl bg-bg-canvas hover:bg-bg-hover transition-colors border border-border-default/60 dark:border-slate-800/80 group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                       >
                         <p className="text-sm text-text-primary leading-relaxed">
                           “{note.text}”
@@ -436,7 +634,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                             {new Date(note.updatedAt).toLocaleDateString()}
                           </span>
                         </div>
-                      </article>
+                      </button>
                     ))}
                   </div>
                 )}
@@ -491,7 +689,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   <div className="flex flex-col p-3.5 rounded-xl bg-bg-canvas hover:bg-bg-hover transition-colors border border-border-default/60">
                     <div className="flex items-center justify-between text-text-muted mb-1.5">
                       <span className="material-symbols-outlined text-[18px]">workspace_premium</span>
-                      <span className="text-xs text-text-muted">Target: 3</span>
+                      <span className="text-xs text-text-muted">All courses</span>
                     </div>
                     <span className="text-xl font-bold text-text-primary tabular-nums">
                       {stats.coursesCompleted}
@@ -522,7 +720,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                       {stats.dailyMinutesStudied} / {dailyGoalMinutes} min ({goalProgressPercent}%)
                     </span>
                   </div>
-                  <div className="w-full h-2 bg-border-default rounded-full overflow-hidden">
+                  <div role="progressbar" aria-label="Daily focus goal" aria-valuemin={0} aria-valuemax={100} aria-valuenow={goalProgressPercent} aria-valuetext={`${stats.dailyMinutesStudied} of ${dailyGoalMinutes} minutes`} className="w-full h-2 bg-border-default rounded-full overflow-hidden">
                     <div
                       className={`h-full rounded-full transition-all duration-300 ${goalProgressPercent >= 100 ? 'bg-emerald-500' : 'bg-accent'}`}
                       style={{ width: `${goalProgressPercent}%` }}
@@ -564,11 +762,28 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
         {/* Daily Focus Goal Modal */}
         {isGoalModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fadeIn">
-            <div className="w-full max-w-sm bg-bg-elevated rounded-2xl border border-border-default p-6 shadow-2xl animate-scaleUp">
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fadeIn"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setIsGoalModalOpen(false);
+            }}
+          >
+            <div
+              ref={goalDialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="goal-modal-title"
+              tabIndex={-1}
+              className="w-full max-w-sm bg-bg-elevated rounded-2xl border border-border-default p-6 shadow-2xl animate-scaleUp"
+            >
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-base font-bold text-text-primary">Set Daily Focus Goal</h3>
-                <button onClick={() => setIsGoalModalOpen(false)} className="text-text-muted hover:text-text-primary p-1">
+                <h3 id="goal-modal-title" className="text-base font-bold text-text-primary">Set Daily Focus Goal</h3>
+                <button
+                  type="button"
+                  onClick={() => setIsGoalModalOpen(false)}
+                  aria-label="Close daily focus goal dialog"
+                  className="text-text-muted hover:text-text-primary p-1 rounded hover:bg-bg-hover transition-colors"
+                >
                   <span className="material-symbols-outlined text-[20px]">close</span>
                 </button>
               </div>
@@ -576,13 +791,19 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 Choose how many minutes you want to dedicate to watching and learning each day.
               </p>
               <div className="flex items-center gap-3 mb-6">
+                <label htmlFor="daily-goal-input" className="sr-only">Minutes per day</label>
                 <input
+                  id="daily-goal-input"
                   type="number"
-                  min="15"
-                  max="480"
-                  step="15"
+                  inputMode="numeric"
+                  min={15}
+                  max={480}
+                  step={15}
                   value={tempGoalMinutes}
-                  onChange={(e) => setTempGoalMinutes(Math.max(15, parseInt(e.target.value) || 15))}
+                  onChange={(e) => {
+                    const parsed = Number.parseInt(e.target.value, 10);
+                    setTempGoalMinutes(Number.isNaN(parsed) ? 15 : Math.min(480, Math.max(15, parsed)));
+                  }}
                   className="w-24 h-11 px-3 bg-bg-canvas border border-border-default rounded-xl font-bold text-center text-text-primary focus:outline-none focus:border-accent"
                 />
                 <span className="text-sm font-semibold text-text-primary">Minutes per day</span>

@@ -17,13 +17,13 @@ export const PrivacyPage: React.FC<PrivacyPageProps> = ({ onBack }) => {
         </button>
 
         <h1 className="text-3xl font-bold tracking-tight mb-2">Privacy Policy</h1>
-        <p className="text-xs text-text-muted mb-8">Effective Date: September 24, 2026</p>
+        <p className="text-xs text-text-muted mb-8">Effective Date: September 27, 2026</p>
 
         <div className="space-y-6 text-sm text-text-secondary leading-relaxed bg-bg-surface p-6 sm:p-8 rounded-2xl border border-border-default shadow-xs">
           <section>
             <h2 className="text-base font-bold text-text-primary mb-2">1. 100% In-Browser Storage</h2>
             <p>
-              Courseify operates strictly within your browser. All of your courses, video watch history, progress percentages, playback timestamps, and study notes are saved locally to your device's browser using LocalStorage.
+              Courseify operates strictly within your browser. Courses, watch history, progress, playback timestamps, personal notes, AI study guides, preferences, and release-notice state are saved locally on your device using browser storage. Clear All Data removes this local Courseify data.
             </p>
           </section>
 
@@ -37,14 +37,21 @@ export const PrivacyPage: React.FC<PrivacyPageProps> = ({ onBack }) => {
           <section>
             <h2 className="text-base font-bold text-text-primary mb-2">3. YouTube Data</h2>
             <p>
-              When you paste a YouTube link, Courseify fetches publicly accessible playlist metadata (titles, durations, and lesson lists) solely to organize your study curriculum. Embedded videos are delivered via YouTube's official IFrame Player API.
+              When you paste a YouTube link, Courseify fetches publicly accessible playlist metadata, titles, durations, and lesson lists solely to organize your study curriculum. Embedded videos are delivered through YouTube's official IFrame Player API. Some private, deleted, or embedding-restricted videos may be unavailable.
             </p>
           </section>
 
           <section>
-            <h2 className="text-base font-bold text-text-primary mb-2">4. Data Export & Portability</h2>
+            <h2 className="text-base font-bold text-text-primary mb-2">4. Gemini AI Features</h2>
             <p>
-              You own your data completely. You can export your full course history and notes at any time as a portable JSON file via the user profile menu and restore it on any machine.
+              If you choose to use AI study guides, your Gemini API key is stored locally in this browser and sent directly to Google from your browser. Courseify does not receive or store the key on its servers. Lesson titles and descriptions are sent to Gemini to generate summaries, notes, highlights, quizzes, and flashcards. Courseify does not retrieve video transcripts. Token usage reported by Gemini is tracked locally for the usage indicator and is not a statement of your remaining Google quota.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-base font-bold text-text-primary mb-2">5. Data Export & Portability</h2>
+            <p>
+              You own your data completely. You can export your full course history and personal notes at any time as a portable JSON file via the user profile menu and restore it on another machine. API keys and Gemini usage records are intentionally excluded from backups.
             </p>
           </section>
         </div>

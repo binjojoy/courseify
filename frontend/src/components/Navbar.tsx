@@ -1,6 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { storage } from '../services/storage';
 import { UserProfile, AppSettings } from '../types';
+import { ImportConflictDialog } from './ImportConflictDialog';
+import { BackupValidationError, MAX_BACKUP_BYTES, type ImportAnalysis, type ImportStrategy } from '../services/backup';
+import { KeyRound, Search, Sparkles } from 'lucide-react';
+import { GeminiUsage, getGeminiApiKey, getGeminiUsage } from '../services/ai';
 
 interface NavbarProps {
   currentView: string;
@@ -12,6 +16,8 @@ interface NavbarProps {
   onRefreshPlaylist?: () => void;
   onShowToast: (msg: string) => void;
   onOpenClearData: () => void;
+  onOpenGeminiSettings: () => void;
+  onOpenCommandPalette: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -23,12 +29,21 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenRemoveCourse,
   onRefreshPlaylist,
   onShowToast,
-  onOpenClearData
+  onOpenClearData,
+  onOpenGeminiSettings,
+  onOpenCommandPalette
 }) => {
   const [profile, setProfile] = useState<UserProfile>(storage.getProfile());
   const [settings, setSettings] = useState<AppSettings>(storage.getSettings());
   const [isAvatarOpen, setIsAvatarOpen] = useState(false);
   const [isCourseMenuOpen, setIsCourseMenuOpen] = useState(false);
+  const [pendingImport, setPendingImport] = useState<string | null>(null);
+  const [importAnalysis, setImportAnalysis] = useState<ImportAnalysis | null>(null);
+  const [importExportedAt, setImportExportedAt] = useState<string | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [hasGeminiKey, setHasGeminiKey] = useState(() => !!getGeminiApiKey());
+  const [geminiUsage, setGeminiUsage] = useState<GeminiUsage>(() => getGeminiUsage());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const avatarMenuRef = useRef<HTMLDivElement>(null);
   const courseMenuRef = useRef<HTMLDivElement>(null);
@@ -39,6 +54,19 @@ export const Navbar: React.FC<NavbarProps> = ({
       setSettings(storage.getSettings());
     });
     return unsub;
+  }, []);
+
+  useEffect(() => {
+    const refreshAiStatus = () => {
+      setHasGeminiKey(!!getGeminiApiKey());
+      setGeminiUsage(getGeminiUsage());
+    };
+    window.addEventListener('courseify:gemini-key-changed', refreshAiStatus);
+    window.addEventListener('courseify:gemini-usage-updated', refreshAiStatus);
+    return () => {
+      window.removeEventListener('courseify:gemini-key-changed', refreshAiStatus);
+      window.removeEventListener('courseify:gemini-usage-updated', refreshAiStatus);
+    };
   }, []);
 
   // Close dropdowns on outside click
@@ -68,40 +96,97 @@ export const Navbar: React.FC<NavbarProps> = ({
   };
 
   const handleExportBackup = () => {
-    const json = storage.exportBackup();
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `courseify-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    setIsAvatarOpen(false);
-    onShowToast('Backup exported successfully.');
+    try {
+      const backup = storage.exportBackup();
+      const json = JSON.stringify(backup, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      // The export timestamp is in both the filename and the payload, so the
+      // user can tell two downloads apart in their Downloads folder.
+      a.href = url;
+      a.download = `courseify-backup-${backup.exportedAt.slice(0, 19).replace(/[:T]/g, '-')}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // Revoke on the next tick: revoking synchronously can cancel the download
+      // in some browsers before it starts reading the blob.
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      // The file exists now, so the dashboard can stop nagging about a backup.
+      storage.recordBackupExport();
+      setIsAvatarOpen(false);
+      onShowToast('Backup exported successfully.');
+    } catch {
+      onShowToast('Could not export your backup. Check available browser storage and try again.');
+    }
+  };
+
+  const resetImportState = () => {
+    setPendingImport(null);
+    setImportAnalysis(null);
+    setImportExportedAt(null);
+    setImportError(null);
+    setIsImporting(false);
   };
 
   const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    setIsAvatarOpen(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
     if (!file) return;
+
+    // Reject on size before reading: a 500MB file would otherwise be loaded
+    // into memory as a string and blow past the localStorage quota anyway.
+    if (file.size > MAX_BACKUP_BYTES) {
+      onShowToast(`That file is ${(file.size / 1024 / 1024).toFixed(1)} MB. Backups must be 10 MB or smaller.`);
+      return;
+    }
+
+    setImportError(null);
     const reader = new FileReader();
+    reader.onerror = () => {
+      setImportError('That file could not be read. Check you have permission to open it, then try again.');
+    };
     reader.onload = (evt) => {
-      const content = evt.target?.result as string;
-      const success = storage.importBackup(content);
-      if (success) {
-        onShowToast('Backup imported successfully.');
-      } else {
-        onShowToast('Failed to import backup: invalid file format.');
+      const content = typeof evt.target?.result === 'string' ? evt.target.result : '';
+      try {
+        // Validate first, so nothing is written until the user has chosen a
+        // strategy and the file is known to be a real backup.
+        const { backup, analysis } = storage.inspectBackup(content);
+        setPendingImport(content);
+        setImportAnalysis(analysis);
+        setImportExportedAt(backup.exportedAt);
+      } catch (err) {
+        setImportError(err instanceof BackupValidationError
+          ? err.message
+          : "That file isn't a readable Courseify backup. Pick the .json file exported from the backup menu.");
       }
     };
     reader.readAsText(file);
-    setIsAvatarOpen(false);
-    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const confirmImport = (strategy: ImportStrategy) => {
+    if (!pendingImport) return;
+    setIsImporting(true);
+    try {
+      const analysis = storage.importBackup(pendingImport, strategy);
+      resetImportState();
+      onShowToast(strategy === 'merge'
+        ? `Backup merged: ${analysis.summary}.`
+        : 'Backup imported successfully.');
+    } catch (err) {
+      setIsImporting(false);
+      setImportError(err instanceof BackupValidationError
+        ? err.message
+        : "That backup could not be imported. Nothing was changed - check available browser storage and try again.");
+    }
   };
 
   const displayName = profile.name || 'User';
   const initialLetter = displayName.trim().charAt(0).toUpperCase() || 'U';
 
   return (
+    <>
     <header className="fixed top-0 left-0 right-0 z-50 h-14 bg-bg-surface/95 dark:bg-[#0F172A]/95 backdrop-blur-md border-b border-border-default dark:border-slate-800">
       <div className={`h-14 ${currentView === 'player' ? 'w-full px-4 sm:px-6' : 'max-w-[1240px] mx-auto px-4 md:px-6 lg:px-8'} flex items-center justify-between`}>
         {/* Left Side: Logo & Navigation */}
@@ -132,9 +217,11 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             </>
           ) : (
-            <button
+            <a
+              href="#/add"
               onClick={() => onNavigate('home')}
               className="flex items-center gap-2.5 focus:outline-none group"
+              aria-label="Courseify add course"
             >
               <div className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center text-white shadow-sm shrink-0 transition-transform group-hover:scale-105">
                 <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
@@ -144,12 +231,12 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span className="text-[18px] font-bold text-text-primary tracking-tight">
                 Courseify
               </span>
-            </button>
+            </a>
           )}
         </div>
 
         {/* Right Side: Dashboard Link, Theme Toggle, Avatar Menu */}
-        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+        <nav aria-label="Primary navigation" className="flex items-center gap-2 sm:gap-3 shrink-0">
           {/* Dashboard Icon Button on Right Side */}
           {currentView !== 'player' && (
             <button
@@ -219,6 +306,33 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
             </div>
           )}
+
+          {/* Theme Toggle Button */}
+          <button
+            onClick={onOpenCommandPalette}
+            aria-label="Search lessons and commands"
+            title="Search lessons and commands (Ctrl+K)"
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors focus:outline-none"
+            type="button"
+          >
+            <Search size={19} />
+          </button>
+
+          <button
+            onClick={onOpenGeminiSettings}
+            aria-label={`${hasGeminiKey ? 'Update' : 'Configure'} Gemini API key. ${geminiUsage.totalTokens.toLocaleString()} tokens used by this key in this browser; remaining Google quota is not available here.`}
+            title={`This browser: ${geminiUsage.totalTokens.toLocaleString()} tokens across ${geminiUsage.requestCount} request${geminiUsage.requestCount === 1 ? '' : 's'}. Google does not expose remaining quota here.`}
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors focus:outline-none"
+            type="button"
+          >
+            <span className="relative flex h-8 w-8 items-center justify-center text-accent">
+              <svg className="absolute inset-0 -rotate-90" viewBox="0 0 36 36" aria-hidden="true">
+                <circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" strokeOpacity="0.2" strokeWidth="2.5" />
+                <circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeDasharray={`${2 * Math.PI * 15}`} strokeDashoffset={`${2 * Math.PI * 15 * (1 - Math.min(geminiUsage.totalTokens / 100000, 1))}`} />
+              </svg>
+              {hasGeminiKey ? <Sparkles size={14} aria-hidden="true" /> : <KeyRound size={14} aria-hidden="true" />}
+            </span>
+          </button>
 
           {/* Theme Toggle Button */}
           <button
@@ -313,11 +427,40 @@ export const Navbar: React.FC<NavbarProps> = ({
             ref={fileInputRef}
             type="file"
             accept=".json,application/json"
+            aria-label="Import backup file"
             className="hidden"
             onChange={handleImportFile}
           />
-        </div>
+        </nav>
       </div>
     </header>
+    {importError && (
+      <div
+        role="alert"
+        className="fixed top-16 left-1/2 -translate-x-1/2 z-[60] w-[min(560px,calc(100%-2rem))] flex items-start gap-3 rounded-xl border border-error/40 bg-bg-elevated px-4 py-3 shadow-xl animate-fadeIn"
+      >
+        <span className="material-symbols-outlined text-[20px] text-error shrink-0 mt-px">error</span>
+        <p className="text-sm text-text-primary leading-relaxed flex-1">{importError}</p>
+        <button
+          type="button"
+          onClick={() => setImportError(null)}
+          aria-label="Dismiss import error"
+          className="shrink-0 text-text-muted hover:text-text-primary transition-colors"
+        >
+          <span className="material-symbols-outlined text-[18px]">close</span>
+        </button>
+      </div>
+    )}
+    {importAnalysis && (
+      <ImportConflictDialog
+        isOpen
+        analysis={importAnalysis}
+        exportedAt={importExportedAt}
+        isImporting={isImporting}
+        onCancel={resetImportState}
+        onConfirm={confirmImport}
+      />
+    )}
+    </>
   );
 };

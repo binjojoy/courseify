@@ -1,6 +1,7 @@
 import React from 'react';
 import { Course } from '../types';
 import { storage } from '../services/storage';
+import { clampPercent, clampRatio, formatClock, formatDurationHuman } from '../utils/progress';
 
 interface ContinueLearningBannerProps {
   course: Course;
@@ -21,14 +22,10 @@ export const ContinueLearningBanner: React.FC<ContinueLearningBannerProps> = ({
   const positionSec = videoProgress?.positionSec || 0;
   const videoDurationSec = currentVideo?.durationSec || 600;
 
-  // Format position vs total: e.g. 14:28 / 26:10
-  const formatSec = (sec: number) => {
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  };
-
-  const videoFraction = Math.min(100, Math.round((positionSec / Math.max(1, videoDurationSec)) * 100));
+  // Shared with the player and the sidebar so a corrupt position cannot render
+  // a >100% bar here.
+  const videoPercent = clampPercent(clampRatio(positionSec / Math.max(1, videoDurationSec)));
+  const coursePercent = clampPercent(metrics.completionPercent);
 
   return (
     <section className="mt-8 bg-bg-surface rounded-xl p-4 shadow-sm transition-all hover:shadow-md border border-border-default">
@@ -43,15 +40,15 @@ export const ContinueLearningBanner: React.FC<ContinueLearningBannerProps> = ({
           <div className="absolute inset-0 bg-gradient-to-t from-player-black/70 via-player-black/20 to-transparent flex items-end p-2.5">
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/75 text-white font-caption text-caption backdrop-blur-sm">
               <span className="material-symbols-outlined text-[14px]">timer</span>
-              {formatSec(positionSec)} / {formatSec(videoDurationSec)}
+              {formatClock(positionSec)} / {formatClock(videoDurationSec)}
             </span>
           </div>
 
           {/* Integrated progress indicator track */}
-          <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/20">
+          <div role="progressbar" aria-label={`${course.title} lesson progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={videoPercent} aria-valuetext={`${videoPercent}% of this lesson watched`} className="absolute bottom-0 left-0 right-0 h-1 bg-white/20">
             <div
               className="h-full bg-accent transition-all duration-300"
-              style={{ width: `${videoFraction}%` }}
+              style={{ width: `${videoPercent}%` }}
             ></div>
           </div>
         </div>
@@ -82,20 +79,20 @@ export const ContinueLearningBanner: React.FC<ContinueLearningBannerProps> = ({
                 {metrics.completedVideos} of {metrics.totalVideos} videos
               </span>
               <span className="font-caption-medium text-caption-medium text-accent">
-                {metrics.completionPercent}% completed
+                {coursePercent}% completed
               </span>
             </div>
 
-            <div className="w-full h-1.5 bg-surface-container rounded-full overflow-hidden">
+            <div role="progressbar" aria-label={`${course.title} course completion`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={coursePercent} aria-valuetext={`${coursePercent}% complete`} className="w-full h-1.5 bg-surface-container rounded-full overflow-hidden">
               <div
                 className="h-full bg-accent rounded-full transition-all duration-500"
-                style={{ width: `${metrics.completionPercent}%` }}
+                style={{ width: `${coursePercent}%` }}
               ></div>
             </div>
 
             <div className="pt-1 flex items-center justify-between">
               <span className="font-caption text-caption text-text-muted">
-                Total course duration: {course.totalDurationFormatted || '18h 45m'}
+                Total course duration: {formatDurationHuman(metrics.totalDurationSec)}
               </span>
               <button
                 type="button"
