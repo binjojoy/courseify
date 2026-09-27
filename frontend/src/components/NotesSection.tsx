@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { storage } from '../services/storage';
 import { Copy, Download } from 'lucide-react';
+import { formatTimestamp } from '../utils/progress';
 
 interface NotesSectionProps {
   courseId: string;
@@ -8,6 +9,10 @@ interface NotesSectionProps {
   currentPlayTimeSec: number;
   onSeek: (seconds: number) => void;
 }
+
+type CopyState = 'idle' | 'copied' | 'failed';
+
+const COPY_FEEDBACK_MS = 2000;
 
 export const NotesSection: React.FC<NotesSectionProps> = ({
   courseId,
@@ -18,7 +23,9 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
   const [text, setText] = useState<string>('');
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving'>('saved');
   const [isEditing, setIsEditing] = useState(false);
-  const debounceTimerRef = useRef<any>(null);
+  const [copyState, setCopyState] = useState<CopyState>('idle');
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textRef = useRef('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -29,20 +36,20 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
     textRef.current = existing;
     setIsEditing(!!existing);
     setSaveStatus('saved');
+    setCopyState('idle');
     return () => {
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
         storage.saveVideoNote(courseId, videoId, textRef.current);
       }
     };
   }, [courseId, videoId]);
 
-  // Format seconds to [MM:SS]
-  const formatTime = (seconds: number) => {
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  };
+  // Never leave a timer running after the section goes away.
+  useEffect(() => () => {
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+  }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newText = e.target.value;
@@ -66,7 +73,7 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
   };
 
   const handleInsertTimestamp = () => {
-    const timeFormatted = formatTime(currentPlayTimeSec);
+    const timeFormatted = formatTimestamp(currentPlayTimeSec);
     const insertStr = ` [${timeFormatted}](#timestamp-${Math.floor(currentPlayTimeSec)}) `;
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -89,10 +96,25 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
     }, 0);
   };
 
+  // The clipboard API rejects on permission denial and in insecure contexts, so
+  // the failure has to be visible — silently doing nothing reads as a broken app.
   const handleCopy = async () => {
+    if (!text) return;
+    let next: CopyState = 'failed';
     try {
-      await navigator.clipboard.writeText(text);
-    } catch {}
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        next = 'copied';
+      }
+    } catch {
+      next = 'failed';
+    }
+    setCopyState(next);
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => {
+      copyTimerRef.current = null;
+      setCopyState('idle');
+    }, COPY_FEEDBACK_MS);
   };
 
   const handleExport = () => {
@@ -101,8 +123,11 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
     const link = document.createElement('a');
     link.href = url;
     link.download = `courseify-notes-${videoId}.md`;
+    document.body.appendChild(link);
     link.click();
-    URL.revokeObjectURL(url);
+    link.remove();
+    // Revoking synchronously can cancel the download in some browsers.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   // Convert timestamp tags e.g. [12:34] into clickable seeking triggers
@@ -196,15 +221,40 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
               className="h-8 px-3 flex items-center gap-1.5 rounded-lg text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors focus:outline-none text-xs font-medium"
             >
               <span className="material-symbols-outlined text-[16px] text-accent">schedule</span>
-              <span>Insert {formatTime(currentPlayTimeSec)}</span>
+              <span>Insert {formatTimestamp(currentPlayTimeSec)}</span>
             </button>
 
             <span className="text-xs text-text-muted hidden sm:inline font-mono">
               Clickable timestamps enabled
             </span>
             <div className="flex items-center gap-1">
-              <button type="button" onClick={handleCopy} aria-label="Copy lesson notes" title="Copy notes" className="flex h-8 w-8 items-center justify-center rounded text-text-muted hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"><Copy size={15} /></button>
-              <button type="button" onClick={handleExport} aria-label="Export notes as Markdown" title="Export Markdown" className="flex h-8 w-8 items-center justify-center rounded text-text-muted hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"><Download size={15} /></button>
+              <button
+                type="button"
+                onClick={handleCopy}
+                disabled={!text}
+                aria-label="Copy lesson notes"
+                title="Copy notes"
+                className="flex h-8 w-8 items-center justify-center rounded text-text-muted hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-40 disabled:hover:bg-transparent"
+              >
+                <Copy size={15} />
+              </button>
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={!text}
+                aria-label="Export notes as Markdown"
+                title="Export Markdown"
+                className="flex h-8 w-8 items-center justify-center rounded text-text-muted hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-40 disabled:hover:bg-transparent"
+              >
+                <Download size={15} />
+              </button>
+              <span
+                role="status"
+                aria-live="polite"
+                className={`text-[11px] font-medium whitespace-nowrap ${copyState === 'failed' ? 'text-error' : 'text-success'}`}
+              >
+                {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : ''}
+              </span>
             </div>
           </div>
         </div>

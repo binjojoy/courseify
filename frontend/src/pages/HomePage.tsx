@@ -1,12 +1,13 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { fetchPlaylist, ApiError, getYouTubeSource } from '../services/api';
 import { getCourseSourceKey } from '../utils/course';
 import { storage } from '../services/storage';
 import { IngestionSkeleton } from '../components/LoadingScreen';
 import { APP_VERSION } from '../config/app';
+import type { NavigateFn } from '../types';
 
 interface HomePageProps {
-  onNavigate: (view: 'home' | 'dashboard' | 'player', courseId?: string) => void;
+  onNavigate: NavigateFn;
   onShowToast: (msg: string) => void;
 }
 
@@ -17,9 +18,15 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
   const [duplicateMessage, setDuplicateMessage] = useState<string | null>(null);
   const [fetchProgress, setFetchProgress] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  // Latches synchronously: `isLoading` is only visible to the next render, so a
+  // double Enter could otherwise start two ingests of the same playlist.
+  const submittingRef = useRef(false);
+  const duplicateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleSubmit = async (e?: React.FormEvent) => {
+  const handleSubmit = useCallback(async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (submittingRef.current) return;
+
     const val = url.trim();
     if (!val) {
       setErrorMessage("Please enter a YouTube playlist or video link.");
@@ -28,15 +35,11 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
 
     setErrorMessage(null);
     setDuplicateMessage(null);
-    setIsLoading(true);
-    setFetchProgress("Connecting to YouTube…");
 
     // Check if duplicate course already exists
     const source = getYouTubeSource(val);
     if (!source) {
       setErrorMessage('Enter a valid YouTube playlist or video URL.');
-      setIsLoading(false);
-      setFetchProgress(null);
       return;
     }
 
@@ -45,42 +48,58 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
 
     if (matchExisting) {
       setDuplicateMessage("This playlist is already in your courses. Opening it now.");
-      setIsLoading(false);
-      setTimeout(() => {
+      if (duplicateTimerRef.current) clearTimeout(duplicateTimerRef.current);
+      duplicateTimerRef.current = setTimeout(() => {
+        duplicateTimerRef.current = null;
         onNavigate('player', matchExisting.id);
       }, 1200);
       return;
     }
 
-    try {
-      setFetchProgress("Fetching playlist metadata and lessons…");
-      const controller = new AbortController();
-      abortControllerRef.current = controller;
-      const { course, videos } = await fetchPlaylist(val, controller.signal);
-      if (controller.signal.aborted) return;
+    submittingRef.current = true;
+    setIsLoading(true);
+    setFetchProgress("Fetching playlist metadata and lessons…");
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
-      // Save course and its videos
-      storage.addOrUpdateCourse(course);
-      storage.saveCourseVideos(course.id, videos);
+    try {
+      const { course, videos } = await fetchPlaylist(val, controller.signal);
+
+      // Course and lessons land together, or not at all — a failed lesson write
+      // must never leave a course card that opens onto an empty player.
+      if (!storage.addCourseWithVideos(course, videos)) {
+        throw new ApiError(
+          'STORAGE_FULL',
+          "This browser is out of storage space for the course. Remove a course or clear data, then try again."
+        );
+      }
 
       onShowToast(`Course "${course.title}" added successfully!`);
       // Navigate immediately to Player View at video 1 (or last watched)
       onNavigate('player', course.id);
-    } catch (err: any) {
-      setIsLoading(false);
-      setFetchProgress(null);
-      if (err instanceof ApiError && err.code !== 'CANCELLED') {
+    } catch (err: unknown) {
+      if (err instanceof ApiError && err.code === 'CANCELLED') return;
+      if (err instanceof ApiError) {
         setErrorMessage(err.message);
-      } else if (err.code !== 'CANCELLED') {
-        setErrorMessage(err.message || "Couldn't reach YouTube. Check your connection and try again.");
+      } else {
+        setErrorMessage(
+          err instanceof Error && err.message
+            ? err.message
+            : "Couldn't reach YouTube. Check your connection and try again."
+        );
       }
-    }
-    finally {
+    } finally {
       abortControllerRef.current = null;
+      submittingRef.current = false;
       setIsLoading(false);
       setFetchProgress(null);
     }
-  };
+  }, [onNavigate, onShowToast, url]);
+
+  const handleRetry = useCallback(() => {
+    if (submittingRef.current) return;
+    void handleSubmit();
+  }, [handleSubmit]);
 
   const handlePasteClipboard = async () => {
     try {
@@ -95,10 +114,19 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
   };
 
   const handleCancelFetch = () => {
-    if (abortControllerRef.current) abortControllerRef.current.abort();
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    submittingRef.current = false;
     setIsLoading(false);
     setFetchProgress(null);
   };
+
+  // An in-flight fetch that resolves after unmount, or the "already added"
+  // redirect, must not fire into a dead component.
+  useEffect(() => () => {
+    abortControllerRef.current?.abort();
+    if (duplicateTimerRef.current) clearTimeout(duplicateTimerRef.current);
+  }, []);
 
   return (
     <main className="w-full pt-14 bg-bg-canvas min-h-screen text-text-primary selection:bg-accent-subtle selection:text-accent relative overflow-x-hidden" data-testid="add-course-page">
@@ -208,9 +236,18 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
 
               {/* Error message */}
               {errorMessage && (
-                <div role="alert" aria-live="assertive" className="mt-2 px-2 text-error text-[13px] flex items-center gap-1.5 font-medium animate-fadeIn text-left">
-                  <span className="material-symbols-outlined text-[16px]">error</span>
-                  <span>{errorMessage}</span>
+                <div role="alert" aria-live="assertive" className="mt-2 px-1 text-error text-[13px] flex items-start gap-1.5 font-medium animate-fadeIn text-left">
+                  <span className="material-symbols-outlined text-[16px] mt-px">error</span>
+                  <span className="flex-1">{errorMessage}</span>
+                  {url.trim() && (
+                    <button
+                      type="button"
+                      onClick={handleRetry}
+                      className="shrink-0 underline underline-offset-2 hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded"
+                    >
+                      Try again
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -299,14 +336,16 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onShowToast }) =
 
           <div className="flex items-center gap-4 text-xs text-text-muted">
             <button
-              onClick={() => onNavigate('privacy' as any)}
+              type="button"
+              onClick={() => onNavigate('privacy')}
               className="hover:text-accent transition-colors hover:underline"
             >
               Privacy Policy
             </button>
             <span>•</span>
             <button
-              onClick={() => onNavigate('terms' as any)}
+              type="button"
+              onClick={() => onNavigate('terms')}
               className="hover:text-accent transition-colors hover:underline"
             >
               Terms of Service

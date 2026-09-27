@@ -4,6 +4,10 @@ export default defineConfig({
   testDir: './tests',
   fullyParallel: true,
   reporter: 'list',
+  // These are real-browser tests that fetch the YouTube IFrame API and the
+  // Google Fonts stylesheet, so a run on a loaded machine can spend most of the
+  // default 30s budget waiting on the network rather than on the app.
+  timeout: 60_000,
   use: {
     baseURL: 'http://127.0.0.1:4173',
     trace: 'retain-on-failure'

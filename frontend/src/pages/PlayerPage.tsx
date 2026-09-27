@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Course, VideoItem, CourseProgress, CourseNotes, FavoriteVideo } from '../types';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Course, VideoItem, CourseProgress, CourseNotes, FavoriteVideo, NavigateFn } from '../types';
 import { storage } from '../services/storage';
 import { fetchVideoDescription } from '../services/api';
 import { getPlayableVideos } from '../utils/course';
+import { computeCourseMetrics, formatDurationHuman } from '../utils/progress';
 import { YouTubePlayer } from '../components/YouTubePlayer';
 import { PlaylistSidebar } from '../components/PlaylistSidebar';
 import { NotesSection } from '../components/NotesSection';
@@ -12,7 +13,7 @@ import { AISessionNotes } from '../components/AISessionNotes';
 interface PlayerPageProps {
   courseId: string;
   initialVideoId?: string;
-  onNavigate: (view: 'home' | 'dashboard' | 'player', courseId?: string) => void;
+  onNavigate: NavigateFn;
   onShowToast: (msg: string) => void;
 }
 
@@ -74,23 +75,32 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
   }, [initialVideoId, videos]);
 
   // Check and fetch description dynamically if missing
+  const descAttemptedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!currentVideoId) return;
     setIsFav(storage.isFavorite(currentVideoId));
 
     const current = videos.find(v => v.videoId === currentVideoId);
-    if (current && (!current.description || current.description.trim() === '')) {
-      const controller = new AbortController();
-      fetchVideoDescription(currentVideoId, controller.signal).then(desc => {
+    if (!current || (current.description && current.description.trim() !== '')) return;
+    // One attempt per lesson: the effect also re-runs on unrelated video list
+    // changes, and a silent failure would otherwise refetch on every render.
+    if (descAttemptedRef.current.has(currentVideoId)) return;
+    descAttemptedRef.current.add(currentVideoId);
+
+    const controller = new AbortController();
+    fetchVideoDescription(currentVideoId, controller.signal)
+      .then(desc => {
         if (!desc || controller.signal.aborted) return;
         setVideos(currentVideos => {
           const updated = currentVideos.map(video => video.videoId === currentVideoId ? { ...video, description: desc } : video);
           storage.saveCourseVideos(courseId, updated);
           return updated;
         });
-      }).catch(() => {});
-      return () => controller.abort();
-    }
+      })
+      // A missing description is not worth interrupting playback for; the panel
+      // already renders an explicit "no description available" state.
+      .catch(() => {});
+    return () => controller.abort();
   }, [currentVideoId, videos, courseId]);
 
   const currentVideo = videos.find(v => v.videoId === currentVideoId && !v.unavailable) || playableVideos[0];
@@ -243,13 +253,16 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
     });
   };
 
-  const metrics = storage.getCourseMetrics(courseId);
+  // Same shared computation the sidebar and dashboard use, fed from the state
+  // already in memory instead of re-reading localStorage on every render.
+  const metrics = useMemo(
+    () => computeCourseMetrics(videos, progress, course?.totalDurationSec),
+    [videos, progress, course?.totalDurationSec]
+  );
 
-  const formatDurationText = (sec: number) => {
-    const h = Math.floor(sec / 3600);
-    const m = Math.floor((sec % 3600) / 60);
-    return `${h}h ${m.toString().padStart(2, '0')}m`;
-  };
+  const totalDurationFormatted = formatDurationHuman(metrics.totalDurationSec);
+  const watchedDurationFormatted = formatDurationHuman(metrics.watchedDurationSec);
+  const sidebarTotalItemCount = course?.totalItemCount ?? course?.videoCount;
 
   if (!course) {
     return (
@@ -518,8 +531,9 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
                     setAutoplayNext(nextVal);
                     storage.saveSettings({ ...storage.getSettings(), autoplayNext: nextVal });
                   }}
-                  totalDurationFormatted={formatDurationText(metrics.totalDurationSec)}
-                  watchedDurationFormatted={formatDurationText(metrics.watchedDurationSec)}
+                  totalDurationFormatted={totalDurationFormatted}
+                  watchedDurationFormatted={watchedDurationFormatted}
+                  totalItemCount={sidebarTotalItemCount}
                 />
               </div>
             </div>
@@ -541,8 +555,9 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
               setAutoplayNext(nextVal);
               storage.saveSettings({ ...storage.getSettings(), autoplayNext: nextVal });
             }}
-            totalDurationFormatted={formatDurationText(metrics.totalDurationSec)}
-            watchedDurationFormatted={formatDurationText(metrics.watchedDurationSec)}
+            totalDurationFormatted={totalDurationFormatted}
+            watchedDurationFormatted={watchedDurationFormatted}
+            totalItemCount={sidebarTotalItemCount}
           />
         </div>
       </div>

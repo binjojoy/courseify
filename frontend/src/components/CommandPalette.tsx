@@ -50,6 +50,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
   }, []);
 
   const commands = useMemo<PaletteCommand[]>(() => {
+    // Building the index reads every lesson list and every note out of
+    // localStorage, so it only happens while the palette is actually open.
+    if (!isOpen) return [];
     const theme = storage.getSettings().theme;
     const inPlayer = currentView === 'player';
     const items: PaletteCommand[] = [
@@ -80,7 +83,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
       });
     });
     return items;
-  }, [courses, currentView, onNavigate, onOpenGeminiSettings, onShowToast, onToggleTheme]);
+  }, [isOpen, courses, currentView, onNavigate, onOpenGeminiSettings, onShowToast, onToggleTheme]);
 
   const filtered = commands.filter(command => `${command.label} ${command.detail} ${command.searchText || ''}`.toLowerCase().includes(query.toLowerCase()));
 

@@ -1,5 +1,8 @@
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
+// Imported rather than hardcoded: seeding the wrong version here would pop the
+// release-notes modal over every test and fail them for the wrong reason.
+import { APP_VERSION } from '../src/config/app';
 
 const course = {
   id: 'course-test',
@@ -19,17 +22,70 @@ const videos = [
   { videoId: 'def12345678', position: 1, title: 'Second lesson', description: '', durationSec: 60, durationFormatted: '01:00', thumbnailUrl: '' }
 ];
 
+/**
+ * Material Symbols renders as a ligature font. Until the webfont arrives the
+ * browser lays the icon *name* out as text ("local_fire_department"), which is
+ * far wider than the glyph and briefly overflows the layout. Any assertion that
+ * measures horizontal fit has to wait for font loading first, otherwise it
+ * fails on a cold cache for a reason that has nothing to do with the CSS.
+ */
+async function waitForFonts(page: Page) {
+  // Bounded: `document.fonts.ready` also settles when a font request fails, but
+  // a slow or blocked font host must not be able to eat the whole test timeout.
+  await page.evaluate(() => Promise.race([
+    document.fonts.ready,
+    new Promise<void>(resolve => setTimeout(resolve, 5000))
+  ]));
+  // One frame so the reflow triggered by the swap is committed to the DOM.
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+}
+
 async function seedCourse(page: Page) {
-  await page.addInitScript(({ courseData, videoData }) => {
-    localStorage.setItem('courseify:last-seen-release', 'v1.6.0');
+  await page.addInitScript(({ courseData, videoData, version }) => {
+    localStorage.setItem('courseify:last-seen-release', version);
     localStorage.setItem('courseify:v1:courses', JSON.stringify([courseData]));
     localStorage.setItem(`courseify:v1:course:${courseData.id}:videos`, JSON.stringify(videoData));
     localStorage.setItem(`courseify:v1:course:${courseData.id}:progress`, JSON.stringify({ lastVideoId: videoData[0].videoId, updatedAt: new Date().toISOString(), completedAt: null, videos: {} }));
-  }, { courseData: course, videoData: videos });
+  }, { courseData: course, videoData: videos, version: APP_VERSION });
+}
+
+/**
+ * Switch to a tab in the course workspace, if this viewport has the tab strip.
+ *
+ * The strip is `display:none` on wide viewports, where the panels sit side by
+ * side instead, so the click is conditional by design. `locator.isVisible()`
+ * does not wait for anything, though, and the strip mounts a tick or two after
+ * the route changes — a bare `if (await tab.isVisible())` therefore silently
+ * skipped the click on a slow paint, and the test failed moments later waiting
+ * for content that was one click away. Waiting for the workspace to mount first
+ * makes the visibility check reliable, and the click itself still auto-waits.
+ *
+ * The lookup is scoped to the workspace tablist on purpose: the AI study guide
+ * has its own tablist with the same tab names ("Notes", "Flashcards"), so an
+ * unscoped `getByRole('tab', { name: 'Flashcards' })` matches twice once the AI
+ * panel is open on a narrow viewport.
+ *
+ * `fallbackListName` covers the desktop layout, where the strip is hidden and
+ * the same panels are reached through the AI study guide's own tablist.
+ */
+async function openWorkspaceTab(page: Page, name: string, fallbackListName?: string) {
+  await page.getByTestId('course-player').waitFor({ state: 'visible' });
+  const workspaceTab = page
+    .getByRole('tablist', { name: 'Course workspace' })
+    .getByRole('tab', { name, exact: true });
+  if (await workspaceTab.isVisible()) {
+    await workspaceTab.click();
+    return;
+  }
+  if (!fallbackListName) return;
+  const fallbackTab = page
+    .getByRole('tablist', { name: fallbackListName })
+    .getByRole('tab', { name, exact: true });
+  if (await fallbackTab.isVisible()) await fallbackTab.click();
 }
 
 test('add-course form exposes invalid URL state', async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem('courseify:last-seen-release', 'v1.6.0'));
+  await page.addInitScript(version => localStorage.setItem('courseify:last-seen-release', version), APP_VERSION);
   await page.goto('/#/add');
   await expect(page.getByTestId('add-course-page')).toBeVisible();
   await page.getByTestId('playlist-url-input').fill('https://example.com/not-a-youtube-source');
@@ -45,8 +101,7 @@ test('deep course lesson routes restore the real player structure', async ({ pag
   await expect(page.locator('[data-testid="playlist-sidebar"]:visible')).toBeVisible();
   await expect(page.locator('[data-testid="lesson-item"]:visible').nth(1)).toHaveAttribute('aria-current', 'true');
   await expect(page.getByRole('progressbar', { name: 'Course completion' })).toHaveAttribute('aria-valuenow', '0');
-  const notesTab = page.getByRole('tab', { name: 'Notes', exact: true });
-  if (await notesTab.isVisible()) await notesTab.click();
+  await openWorkspaceTab(page, 'Notes');
   await page.getByRole('button', { name: /click to add note/i }).click();
   await expect(page.getByTestId('notes-editor')).toBeVisible();
 });
@@ -56,6 +111,7 @@ test('dashboard exposes seeded course state on mobile', async ({ page }) => {
   await page.goto('/#/dashboard');
   await expect(page.getByTestId('dashboard')).toBeVisible();
   await expect(page.getByTestId('course-card')).toContainText('Inspectable Course');
+  await waitForFonts(page);
   await expect(page.locator('body')).not.toHaveCSS('overflow-x', 'scroll');
   for (const width of [375, 768, 1024, 1440]) {
     await page.setViewportSize({ width, height: 900 });
@@ -116,7 +172,7 @@ test('command palette navigates lessons and Gemini key settings persist locally'
   await expect(savedKeyDialog.getByRole('status')).toContainText('Gemini replied: Hello');
   await expect(page.getByRole('button', { name: /12 tokens used by this key/ })).toBeVisible();
   await expect.poll(() => page.evaluate(() => (window as any).__geminiTestHeader)).toBe('AIzaSyCourseifyTestKey');
-  await expect.poll(() => page.evaluate(() => (window as any).__geminiTestUrl)).toContain('gemini-3.6-flash');
+  await expect.poll(() => page.evaluate(() => (window as any).__geminiTestUrl)).toContain('gemini-3.8-flash');
   await savedKeyDialog.getByRole('textbox', { name: 'API key' }).fill('bad-key');
   await savedKeyDialog.getByRole('button', { name: 'Test key' }).click();
   await expect(savedKeyDialog.getByRole('alert')).toContainText('API key not valid.');
@@ -127,6 +183,7 @@ test('course workspace stays within mobile, tablet, and desktop widths', async (
   await page.goto('/#/course/course-test');
   for (const width of [375, 768, 1024, 1440]) {
     await page.setViewportSize({ width, height: 900 });
+    await waitForFonts(page);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     if (width === 375) {
       const stickyWorkspace = page.locator('[data-testid="course-player"] .sticky').first();
@@ -162,8 +219,7 @@ test('AI study guide renders highlights and interactive flashcards', async ({ pa
     };
   }, studyGuide);
   await page.goto('/#/course/course-test');
-  const mobileAiTab = page.getByRole('tab', { name: 'AI Notes' });
-  if (await mobileAiTab.isVisible()) await mobileAiTab.click();
+  await openWorkspaceTab(page, 'AI Notes');
   await page.getByRole('button', { name: 'Generate study guide' }).click();
   await expect(page.getByText(studyGuide.oneSentenceSummary)).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Quiz (10)' })).toBeVisible();
@@ -173,9 +229,7 @@ test('AI study guide renders highlights and interactive flashcards', async ({ pa
   await expect(aiWorkspace.getByRole('listitem')).toContainText('State is lesson data.');
   await aiWorkspace.getByRole('tab', { name: 'Highlights' }).click();
   await expect(page.getByRole('button', { name: /React state/ })).toBeVisible();
-  const workspaceTabs = page.getByRole('tablist', { name: 'Course workspace' });
-  if (await workspaceTabs.isVisible()) await workspaceTabs.getByRole('tab', { name: 'Flashcards' }).click();
-  else await page.getByRole('region', { name: 'AI session notes' }).getByRole('tab', { name: 'Flashcards' }).click();
+  await openWorkspaceTab(page, 'Flashcards', 'AI study guide sections');
   await page.getByRole('button', { name: 'Question flashcard 1', exact: true }).click();
   await expect(page.getByText('Lesson data', { exact: true })).toBeVisible();
 });
@@ -223,8 +277,7 @@ test('selecting a lesson initializes the YouTube player with its video id', asyn
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.keyboard.press('k');
   await expect.poll(() => page.evaluate(() => (window as any).__ytPlayCalls)).toBe(1);
-  const workspaceNotesTab = page.getByRole('tablist', { name: 'Course workspace' }).getByRole('tab', { name: 'Notes', exact: true });
-  if (await workspaceNotesTab.isVisible()) await workspaceNotesTab.click();
+  await openWorkspaceTab(page, 'Notes');
   await page.getByRole('button', { name: /click to add note/i }).click();
   await page.getByTestId('notes-editor').fill('Key detail: ');
   await page.getByTestId('notes-editor').press('k');
@@ -253,8 +306,7 @@ test('Gemini quota errors remain visible in the AI workspace', async ({ page }) 
     };
   });
   await page.goto('/#/course/course-test');
-  const mobileAiTab = page.getByRole('tab', { name: 'AI Notes' });
-  if (await mobileAiTab.isVisible()) await mobileAiTab.click();
+  await openWorkspaceTab(page, 'AI Notes');
   await page.getByRole('button', { name: 'Generate study guide' }).click();
   await expect(page.getByRole('alert')).toContainText('Daily quota exceeded.');
 });

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Eye, EyeOff, KeyRound, X } from 'lucide-react';
 import { getGeminiApiKey, saveGeminiApiKey, testGeminiApiKey } from '../services/ai';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 interface GeminiKeyModalProps {
   isOpen: boolean;
@@ -16,6 +17,7 @@ export const GeminiKeyModal: React.FC<GeminiKeyModalProps> = ({ isOpen, onClose,
   const [hasSavedKey, setHasSavedKey] = useState(false);
   const [testResult, setTestResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [viewport, setViewport] = useState({ top: 0, height: typeof window === 'undefined' ? 0 : window.innerHeight });
+  const dialogRef = useFocusTrap<HTMLElement>(isOpen);
 
   useEffect(() => {
     if (isOpen) {
@@ -100,7 +102,7 @@ export const GeminiKeyModal: React.FC<GeminiKeyModalProps> = ({ isOpen, onClose,
   return (
     createPortal(
     <div className="fixed left-0 right-0 z-[80] flex items-center justify-center overflow-y-auto bg-scrim p-4 backdrop-blur-sm" style={{ top: viewport.top, height: viewport.height }} onMouseDown={event => event.target === event.currentTarget && onClose()}>
-      <section role="dialog" aria-modal="true" aria-labelledby="gemini-key-title" className="my-auto max-h-full w-full max-w-md overflow-y-auto rounded-xl border border-border-default bg-bg-elevated p-5 shadow-2xl animate-scaleUp">
+      <section ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="gemini-key-title" tabIndex={-1} className="my-auto max-h-full w-full max-w-md overflow-y-auto rounded-xl border border-border-default bg-bg-elevated p-5 shadow-2xl animate-scaleUp">
         <div className="mb-5 flex items-start justify-between gap-4">
           <div>
             <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-accent-subtle text-accent"><KeyRound size={20} /></div>

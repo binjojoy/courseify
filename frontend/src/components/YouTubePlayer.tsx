@@ -1,12 +1,14 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { storage } from '../services/storage';
-
-declare global {
-  interface Window {
-    YT: any;
-    onYouTubeIframeAPIReady: () => void;
-  }
-}
+import {
+  YTPlayer,
+  YTPlayerConstructor,
+  YTPlayerEvent,
+  YTPlayerState,
+  isPermanentPlaybackError,
+  loadYouTubeIframeApi
+} from '../types/youtube';
+import { clampRatio, formatClock } from '../utils/progress';
 
 interface YouTubePlayerProps {
   videoId: string;
@@ -20,6 +22,22 @@ interface YouTubePlayerProps {
   onTimeUpdate?: (currentSec: number, durationSec: number) => void;
   onAutoComplete?: (videoId: string) => void;
 }
+
+type PlayerFailure = 'blocked' | 'transient';
+
+const qualityLabels: Record<string, string> = {
+  highres: '4K',
+  hd2160: '2160p',
+  hd1440: '1440p',
+  hd1080: '1080p',
+  hd720: '720p',
+  large: '480p',
+  medium: '360p',
+  small: '240p',
+  tiny: '144p',
+  auto: 'Auto',
+  default: 'Auto'
+};
 
 export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   videoId,
@@ -35,9 +53,10 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const playerRef = useRef<any>(null);
+  const playerRef = useRef<YTPlayer | null>(null);
 
-  const [hasError, setHasError] = useState(false);
+  const [failure, setFailure] = useState<PlayerFailure | null>(null);
+  const [loadMessage, setLoadMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(initialPositionSec || 0);
@@ -53,46 +72,47 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   const [availableQualities, setAvailableQualities] = useState<string[]>([]);
   const [currentQuality, setCurrentQuality] = useState('auto');
   const [bufferedPercent, setBufferedPercent] = useState(0);
-  const [isSeeking, setIsSeeking] = useState(false);
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const [hoverPercent, setHoverPercent] = useState(0);
 
-  const intervalRef = useRef<any>(null);
-  const hideControlsTimeoutRef = useRef<any>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const hideControlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTimeRef = useRef<number>(initialPositionSec);
   const autoCompleteTriggeredRef = useRef(false);
   const isPlayingRef = useRef(false);
   const lastSampleTimeRef = useRef<number | null>(null);
   const lastPersistedAtRef = useRef(0);
   const pendingWatchTimeRef = useRef(0);
+  const qualitiesLoadedRef = useRef(false);
 
-  // Load YouTube Iframe API Script
-  useEffect(() => {
-    if (!window.YT) {
-      const tag = document.createElement('script');
-      tag.src = 'https://www.youtube.com/iframe_api';
-      const firstScriptTag = document.getElementsByTagName('script')[0];
-      firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
+  // Latest-callback refs so the long-lived polling interval never captures stale
+  // props, which previously made the interval restart on every render.
+  const callbacksRef = useRef({ onEnded, onNextVideo, onTimeUpdate, onAutoComplete, autoplayNext, autoCompleteThreshold });
+  callbacksRef.current = { onEnded, onNextVideo, onTimeUpdate, onAutoComplete, autoplayNext, autoCompleteThreshold };
+
+  const flushWatchTime = useCallback(() => {
+    if (pendingWatchTimeRef.current > 0) {
+      storage.recordWatchTime(pendingWatchTimeRef.current);
+      pendingWatchTimeRef.current = 0;
     }
   }, []);
 
   // Save position on window unload
   useEffect(() => {
     const saveCurrentPosition = () => {
-      if (playerRef.current && typeof playerRef.current.getCurrentTime === 'function') {
-        const time = playerRef.current.getCurrentTime();
-        if (time > 0) {
-          storage.saveVideoPosition(courseId, videoId, time);
-        }
+      const player = playerRef.current;
+      if (!player) return;
+      try {
+        const time = player.getCurrentTime();
+        if (time > 0) storage.saveVideoPosition(courseId, videoId, time);
+      } catch {
+        // The iframe can be torn down before unload; nothing to persist.
       }
     };
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
         saveCurrentPosition();
-        if (pendingWatchTimeRef.current > 0) {
-          storage.recordWatchTime(pendingWatchTimeRef.current);
-          pendingWatchTimeRef.current = 0;
-        }
+        flushWatchTime();
       }
     };
     window.addEventListener('beforeunload', saveCurrentPosition);
@@ -101,12 +121,9 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
       window.removeEventListener('beforeunload', saveCurrentPosition);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       saveCurrentPosition();
-      if (pendingWatchTimeRef.current > 0) {
-        storage.recordWatchTime(pendingWatchTimeRef.current);
-        pendingWatchTimeRef.current = 0;
-      }
+      flushWatchTime();
     };
-  }, [courseId, videoId]);
+  }, [courseId, videoId, flushWatchTime]);
 
   // Listen for fullscreen changes
   useEffect(() => {
@@ -120,11 +137,15 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   useEffect(() => {
     const handleSeekRequest = (event: Event) => {
       const seconds = (event as CustomEvent<number>).detail;
-      if (!Number.isFinite(seconds) || !playerRef.current) return;
+      const player = playerRef.current;
+      if (!Number.isFinite(seconds) || !player) return;
       try {
-        playerRef.current.seekTo(seconds, true);
-        setCurrentTime(seconds);
-      } catch {}
+        const target = Math.max(0, seconds);
+        player.seekTo(target, true);
+        setCurrentTime(target);
+      } catch {
+        // Seeking before the player is ready is a no-op, not a failure.
+      }
     };
     window.addEventListener('courseify:seek-player', handleSeekRequest);
     return () => window.removeEventListener('courseify:seek-player', handleSeekRequest);
@@ -133,35 +154,42 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
   // Initialize or update YouTube Player
   useEffect(() => {
     let isMounted = true;
-    setHasError(false);
+    setFailure(null);
+    setLoadMessage(null);
     setIsLoading(true);
+    setCurrentTime(initialPositionSec || 0);
+    setDuration(0);
+    setBufferedPercent(0);
+    setCcEnabled(false);
+    setCurrentQuality('auto');
+    setAvailableQualities([]);
+    qualitiesLoadedRef.current = false;
     autoCompleteTriggeredRef.current = false;
     lastPersistedAtRef.current = initialPositionSec || 0;
+    lastSampleTimeRef.current = null;
+    isPlayingRef.current = false;
 
-    const initPlayer = () => {
-      if (!containerRef.current || !window.YT || !window.YT.Player) return;
-
-      // If player already exists, load video directly
-      if (playerRef.current && typeof playerRef.current.loadVideoById === 'function') {
-        try {
-          playerRef.current.loadVideoById({
-            videoId: videoId,
-            startSeconds: initialPositionSec || 0
-          });
-          playerRef.current.setPlaybackQuality?.('default');
-          playerRef.current.unloadModule?.('captions');
-          setCcEnabled(false);
-          setCurrentQuality('auto');
-          setIsLoading(false);
-          return;
-        } catch (e) {
-          console.warn('Error reusing player, recreating:', e);
+    const readQualities = (player: YTPlayer) => {
+      if (qualitiesLoadedRef.current) return;
+      try {
+        const qualities = player.getAvailableQualityLevels?.() ?? [];
+        if (qualities.length > 0) {
+          qualitiesLoadedRef.current = true;
+          setAvailableQualities(qualities);
+          setCurrentQuality(player.getPlaybackQuality?.() || 'auto');
         }
+      } catch {
+        // Quality discovery is optional; the settings menu simply stays empty.
       }
+    };
+
+    const createPlayer = (Player: YTPlayerConstructor) => {
+      const container = containerRef.current;
+      if (!container || !isMounted) return;
 
       try {
-        playerRef.current = new window.YT.Player(containerRef.current, {
-          videoId: videoId,
+        playerRef.current = new Player(container, {
+          videoId,
           playerVars: {
             autoplay: 1,
             start: Math.floor(initialPositionSec || 0),
@@ -178,175 +206,272 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
             origin: window.location.origin
           },
           events: {
-            onReady: (event: any) => {
+            onReady: (event: YTPlayerEvent) => {
               if (!isMounted) return;
-              event.target.getIframe?.()?.setAttribute('title', 'YouTube video player');
+              try {
+                event.target.getIframe?.()?.setAttribute('title', 'YouTube video player');
+              } catch {
+                // The iframe title is an a11y nicety, not a requirement.
+              }
               setIsLoading(false);
               if (initialPositionSec > 0) {
-                event.target.seekTo(initialPositionSec, true);
+                try {
+                  event.target.seekTo(initialPositionSec, true);
+                } catch {
+                  // Seeking can be refused before metadata arrives.
+                }
               }
               try {
                 event.target.setPlaybackQuality?.('default');
                 event.target.unloadModule?.('captions');
-                setCcEnabled(false);
-                setCurrentQuality('auto');
                 const dur = event.target.getDuration();
-                if (dur) setDuration(dur);
+                if (dur > 0) setDuration(dur);
                 const vol = event.target.getVolume();
-                if (vol !== undefined) setVolume(vol);
+                if (Number.isFinite(vol)) setVolume(vol);
                 setIsMuted(event.target.isMuted());
-
-                // Fetch available quality levels
-                const qualities = event.target.getAvailableQualityLevels?.() || [];
-                setAvailableQualities(qualities);
-                const curQuality = event.target.getPlaybackQuality?.() || 'auto';
-                setCurrentQuality(curQuality);
-              } catch {}
+                readQualities(event.target);
+              } catch {
+                // A partially initialised player still plays.
+              }
             },
-            onStateChange: (event: any) => {
+            onStateChange: (event: YTPlayerEvent) => {
               if (!isMounted) return;
-              if (event.data === window.YT.PlayerState.PLAYING) {
+              const state = event.data as YTPlayerState | undefined;
+              if (state === YTPlayerState.PLAYING) {
                 setIsPlaying(true);
                 isPlayingRef.current = true;
-                lastSampleTimeRef.current = event.target.getCurrentTime();
                 setIsLoading(false);
-                // Re-fetch qualities when video starts playing (they may not be available before)
                 try {
-                  const qualities = event.target.getAvailableQualityLevels?.() || [];
-                  if (qualities.length > 0) setAvailableQualities(qualities);
-                } catch {}
-              } else if (event.data === window.YT.PlayerState.PAUSED) {
+                  lastSampleTimeRef.current = event.target.getCurrentTime();
+                  readQualities(event.target);
+                } catch {
+                  lastSampleTimeRef.current = null;
+                }
+              } else if (state === YTPlayerState.PAUSED) {
                 setIsPlaying(false);
                 isPlayingRef.current = false;
                 lastSampleTimeRef.current = null;
-                const time = event.target.getCurrentTime();
-                storage.saveVideoPosition(courseId, videoId, time);
-                if (pendingWatchTimeRef.current > 0) {
-                  storage.recordWatchTime(pendingWatchTimeRef.current);
-                  pendingWatchTimeRef.current = 0;
-                }
-              } else if (event.data === window.YT.PlayerState.ENDED) {
+                try {
+                  storage.saveVideoPosition(courseId, videoId, event.target.getCurrentTime());
+                } catch { /* player torn down */ }
+                flushWatchTime();
+              } else if (state === YTPlayerState.ENDED) {
                 setIsPlaying(false);
                 isPlayingRef.current = false;
                 lastSampleTimeRef.current = null;
-                const time = event.target.getDuration();
-                storage.saveVideoPosition(courseId, videoId, time);
-                if (pendingWatchTimeRef.current > 0) {
-                  storage.recordWatchTime(pendingWatchTimeRef.current);
-                  pendingWatchTimeRef.current = 0;
-                }
-                if (onAutoComplete) onAutoComplete(videoId);
-                if (onEnded) onEnded();
-                if (autoplayNext && onNextVideo) {
-                  onNextVideo();
-                }
-              } else if (event.data === window.YT.PlayerState.BUFFERING) {
+                try {
+                  storage.saveVideoPosition(courseId, videoId, event.target.getDuration());
+                } catch { /* player torn down */ }
+                flushWatchTime();
+                const current = callbacksRef.current;
+                current.onAutoComplete?.(videoId);
+                current.onEnded?.();
+                if (current.autoplayNext) current.onNextVideo?.();
+              } else if (state === YTPlayerState.BUFFERING) {
                 setIsLoading(true);
                 isPlayingRef.current = false;
                 lastSampleTimeRef.current = null;
               }
             },
-            onPlaybackQualityChange: (event: any) => {
-              if (!isMounted) return;
-              if (event.data) {
-                setCurrentQuality(event.data);
-              }
+            onPlaybackQualityChange: (event: YTPlayerEvent) => {
+              if (isMounted && typeof event.data === 'string') setCurrentQuality(event.data);
             },
-            onError: (err: any) => {
-              console.error('YouTube player error:', err.data);
-              if (isMounted) {
-                setHasError(true);
-                setIsLoading(false);
+            onError: (event: YTPlayerEvent) => {
+              const code = typeof event.data === 'number' ? event.data : Number(event.data);
+              if (!isMounted) return;
+              setIsLoading(false);
+              setIsPlaying(false);
+              isPlayingRef.current = false;
+
+              if (isPermanentPlaybackError(code)) {
+                // Permanently unplayable: remember it so the sidebar stops
+                // offering a dead play button on the next visit.
+                storage.markVideoUnavailable(courseId, videoId);
+                setFailure('blocked');
+                return;
               }
+              // Codes 2/5 and the network errors are usually transient. Showing
+              // them as "unavailable" would wrongly disable a working lesson.
+              setLoadMessage(
+                'This video would not start playing. Check your connection, then try again.'
+              );
+              setFailure('transient');
             }
           }
         });
       } catch (err) {
         console.error('Failed to instantiate YT.Player:', err);
-        if (isMounted) setHasError(true);
+        if (isMounted) {
+          setIsLoading(false);
+          setLoadMessage('The YouTube player could not be started in this browser.');
+          setFailure('transient');
+        }
       }
     };
 
-    if (window.YT && window.YT.Player) {
-      initPlayer();
-    } else {
-      const prevCallback = window.onYouTubeIframeAPIReady;
-      window.onYouTubeIframeAPIReady = () => {
-        if (prevCallback) prevCallback();
-        if (isMounted) initPlayer();
-      };
-    }
+    const initPlayer = (Player: YTPlayerConstructor) => {
+      if (!isMounted || !containerRef.current) return;
+      createPlayer(Player);
+    };
+
+    loadYouTubeIframeApi()
+      .then(api => initPlayer(api.Player))
+      .catch((err: unknown) => {
+        if (!isMounted) return;
+        setIsLoading(false);
+        setLoadMessage(err instanceof Error ? err.message : 'The YouTube player could not be loaded.');
+        setFailure('transient');
+      });
 
     // Interval to poll time, buffer, and sync controls
     intervalRef.current = setInterval(() => {
-      if (playerRef.current && typeof playerRef.current.getCurrentTime === 'function') {
-        try {
-          const cur = playerRef.current.getCurrentTime();
-          const dur = playerRef.current.getDuration();
-          if (cur !== undefined) {
-            setCurrentTime(cur);
-            lastTimeRef.current = cur;
+      const player = playerRef.current;
+      if (!player) return;
+      try {
+        const cur = player.getCurrentTime();
+        const dur = player.getDuration();
+        if (Number.isFinite(cur)) {
+          setCurrentTime(cur);
+          lastTimeRef.current = cur;
+        }
+        if (Number.isFinite(dur) && dur > 0) setDuration(dur);
+
+        const fraction = player.getVideoLoadedFraction?.() ?? 0;
+        setBufferedPercent(clampRatio(fraction) * 100);
+
+        const realQuality = player.getPlaybackQuality?.();
+        if (realQuality && realQuality !== 'unknown') setCurrentQuality(realQuality);
+        readQualities(player);
+
+        if (Number.isFinite(cur) && Number.isFinite(dur) && dur > 0) {
+          const current = callbacksRef.current;
+          current.onTimeUpdate?.(cur, dur);
+
+          if (clampRatio(cur / dur) >= clampRatio(current.autoCompleteThreshold) && current.onAutoComplete && !autoCompleteTriggeredRef.current) {
+            autoCompleteTriggeredRef.current = true;
+            current.onAutoComplete(videoId);
           }
-          if (dur !== undefined && dur > 0) {
-            setDuration(dur);
-          }
 
-          // Buffer progress
-          const fraction = playerRef.current.getVideoLoadedFraction?.() || 0;
-          setBufferedPercent(fraction * 100);
-
-          // Sync current playback quality from YouTube API
-          const realQuality = playerRef.current.getPlaybackQuality?.();
-          if (realQuality && realQuality !== 'unknown') {
-            setCurrentQuality(realQuality);
-          }
-
-          // Fetch available qualities if not loaded yet
-          const avail = playerRef.current.getAvailableQualityLevels?.();
-          if (avail && avail.length > 0 && availableQualities.length === 0) {
-            setAvailableQualities(avail);
-          }
-
-          if (cur !== undefined && dur !== undefined) {
-            if (onTimeUpdate) onTimeUpdate(cur, dur);
-
-            // Auto-complete at >= 90%
-            if (dur > 0 && cur / dur >= autoCompleteThreshold && onAutoComplete && !autoCompleteTriggeredRef.current) {
-              autoCompleteTriggeredRef.current = true;
-              onAutoComplete(videoId);
-            }
-
-            if (isPlayingRef.current && lastSampleTimeRef.current !== null) {
-              const watchedDelta = cur - lastSampleTimeRef.current;
-              if (watchedDelta > 0 && watchedDelta <= 2) {
-                pendingWatchTimeRef.current += watchedDelta;
-                if (pendingWatchTimeRef.current >= 3) {
-                  storage.recordWatchTime(pendingWatchTimeRef.current);
-                  pendingWatchTimeRef.current = 0;
-                }
-              }
-            }
-            lastSampleTimeRef.current = isPlayingRef.current ? cur : null;
-
-            // Keep UI updates frequent, but persist resume position every five seconds.
-            if (isPlayingRef.current && cur - lastPersistedAtRef.current >= 5) {
-              storage.saveVideoPosition(courseId, videoId, cur);
-              lastPersistedAtRef.current = cur;
+          if (isPlayingRef.current && lastSampleTimeRef.current !== null) {
+            const watchedDelta = cur - lastSampleTimeRef.current;
+            // Ignore jumps from seeking and from 2x playback between ticks.
+            if (watchedDelta > 0 && watchedDelta <= 2) {
+              pendingWatchTimeRef.current += watchedDelta;
+              if (pendingWatchTimeRef.current >= 3) flushWatchTime();
             }
           }
-        } catch {}
+          lastSampleTimeRef.current = isPlayingRef.current ? cur : null;
+
+          // Keep UI updates frequent, but persist resume position every five seconds.
+          if (isPlayingRef.current && cur - lastPersistedAtRef.current >= 5) {
+            storage.saveVideoPosition(courseId, videoId, cur);
+            lastPersistedAtRef.current = cur;
+          }
+        }
+      } catch {
+        // A destroyed player throws on every call; the next tick is a no-op.
       }
     }, 1000);
 
     return () => {
       isMounted = false;
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      if (playerRef.current && typeof playerRef.current.destroy === 'function') {
-        playerRef.current.destroy();
-        playerRef.current = null;
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      const player = playerRef.current;
+      playerRef.current = null;
+      if (player) {
+        try {
+          player.destroy();
+        } catch {
+          // Already destroyed by the iframe teardown.
+        }
       }
     };
-  }, [videoId, courseId]);
+  }, [videoId, courseId, initialPositionSec, flushWatchTime]);
+
+  const togglePlay = useCallback(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    try {
+      if (isPlaying) {
+        player.pauseVideo();
+      } else {
+        player.playVideo();
+      }
+    } catch {
+      // Ignore a play() rejected while the embed is still initialising.
+    }
+  }, [isPlaying]);
+
+  const rewind10 = useCallback(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    try {
+      const target = Math.max(0, (player.getCurrentTime() || 0) - 10);
+      player.seekTo(target, true);
+      setCurrentTime(target);
+    } catch {
+      // Ignore seeks refused before the player is ready.
+    }
+  }, []);
+
+  const forward10 = useCallback(() => {
+    const player = playerRef.current;
+    if (!player || !duration) return;
+    try {
+      const target = Math.min(duration, (player.getCurrentTime() || 0) + 10);
+      player.seekTo(target, true);
+      setCurrentTime(target);
+    } catch {
+      // Ignore seeks refused before the player is ready.
+    }
+  }, [duration]);
+
+  const toggleMute = useCallback(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    try {
+      if (isMuted) {
+        player.unMute();
+        setIsMuted(false);
+      } else {
+        player.mute();
+        setIsMuted(true);
+      }
+    } catch {
+      // Ignore a refused mute on a partially initialised embed.
+    }
+  }, [isMuted]);
+
+  const toggleCaptions = useCallback(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    const nextEnabled = !ccEnabled;
+    try {
+      if (nextEnabled) {
+        player.loadModule?.('captions');
+        player.setOption?.('captions', 'track', { languageCode: 'en' });
+      } else {
+        player.unloadModule?.('captions');
+        player.setOption?.('captions', 'track', {});
+      }
+      setCcEnabled(nextEnabled);
+    } catch {
+      // The captions module is optional; reflect the intent either way.
+      setCcEnabled(nextEnabled);
+    }
+  }, [ccEnabled]);
+
+  const toggleFullscreen = useCallback(() => {
+    if (!wrapperRef.current) return;
+    if (!document.fullscreenElement) {
+      void wrapperRef.current.requestFullscreen?.().catch(() => {});
+    } else {
+      void document.exitFullscreen?.().catch(() => {});
+    }
+  }, []);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -354,6 +479,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName;
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable || target?.closest('button, a, [role="tab"], [role="checkbox"], [role="option"], [role="slider"], [role="dialog"]')) return;
+      if (failure) return;
 
       switch (e.key) {
         case ' ':
@@ -395,14 +521,30 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [isPlaying, volume, isMuted, ccEnabled, duration]);
+  });
+
+  const changeVolume = (newVol: number) => {
+    const player = playerRef.current;
+    if (!player) return;
+    try {
+      player.setVolume(newVol);
+      if (newVol > 0 && isMuted) {
+        player.unMute();
+        setIsMuted(false);
+      }
+      setVolume(newVol);
+    } catch {
+      // Ignore a refused volume change on a partially initialised embed.
+    }
+  };
 
   // Controls auto-hide on inactivity
   const handleMouseMove = () => {
     setShowControls(true);
     if (hideControlsTimeoutRef.current) clearTimeout(hideControlsTimeoutRef.current);
     hideControlsTimeoutRef.current = setTimeout(() => {
-      if (isPlaying) {
+      hideControlsTimeoutRef.current = null;
+      if (isPlayingRef.current) {
         setShowControls(false);
         setIsSpeedMenuOpen(false);
         setIsSettingsOpen(false);
@@ -410,33 +552,37 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     }, 3500);
   };
 
-  const togglePlay = useCallback(() => {
-    if (!playerRef.current) return;
-    try {
-      if (isPlaying) {
-        playerRef.current.pauseVideo();
-      } else {
-        playerRef.current.playVideo();
-      }
-    } catch {}
-  }, [isPlaying]);
+  // Never leave a pending hide-controls timer behind: it used to fire
+  // setState on an unmounted component and, on the dashboard, keep a detached
+  // closure alive for the rest of the session.
+  useEffect(() => () => {
+    if (hideControlsTimeoutRef.current) {
+      clearTimeout(hideControlsTimeoutRef.current);
+      hideControlsTimeoutRef.current = null;
+    }
+  }, []);
 
   const handleSeekChange = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!playerRef.current || !duration) return;
+    const player = playerRef.current;
+    if (!player || !duration) return;
     const rect = e.currentTarget.getBoundingClientRect();
+    if (rect.width === 0) return;
     const clickX = e.clientX - rect.left;
-    const targetPercent = Math.max(0, Math.min(1, clickX / rect.width));
+    const targetPercent = clampRatio(clickX / rect.width);
     const targetSec = targetPercent * duration;
     try {
-      playerRef.current.seekTo(targetSec, true);
+      player.seekTo(targetSec, true);
       setCurrentTime(targetSec);
-    } catch {}
+    } catch {
+      // Ignore seeks refused before the player is ready.
+    }
   };
 
   const handleTimelineHover = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!duration) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    if (rect.width === 0) return;
+    const percent = clampRatio((e.clientX - rect.left) / rect.width);
     setHoverPercent(percent * 100);
     setHoverTime(percent * duration);
   };
@@ -447,136 +593,46 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
     e.preventDefault();
     const current = playerRef.current?.getCurrentTime?.() || currentTime;
     const target = e.key === 'Home' ? 0 : e.key === 'End' ? duration : current + (e.key === 'ArrowRight' ? 5 : -5);
-    playerRef.current?.seekTo?.(Math.max(0, Math.min(duration, target)), true);
-    setCurrentTime(Math.max(0, Math.min(duration, target)));
-  };
-
-  const rewind10 = useCallback(() => {
-    if (!playerRef.current) return;
+    const clamped = Math.max(0, Math.min(duration, target));
     try {
-      const cur = playerRef.current.getCurrentTime() || 0;
-      const target = Math.max(0, cur - 10);
-      playerRef.current.seekTo(target, true);
-      setCurrentTime(target);
-    } catch {}
-  }, []);
-
-  const forward10 = useCallback(() => {
-    if (!playerRef.current || !duration) return;
-    try {
-      const cur = playerRef.current.getCurrentTime() || 0;
-      const target = Math.min(duration, cur + 10);
-      playerRef.current.seekTo(target, true);
-      setCurrentTime(target);
-    } catch {}
-  }, [duration]);
-
-  const toggleMute = useCallback(() => {
-    if (!playerRef.current) return;
-    try {
-      if (isMuted) {
-        playerRef.current.unMute();
-        setIsMuted(false);
-      } else {
-        playerRef.current.mute();
-        setIsMuted(true);
-      }
-    } catch {}
-  }, [isMuted]);
-
-  const changeVolume = (newVol: number) => {
-    if (!playerRef.current) return;
-    try {
-      playerRef.current.setVolume(newVol);
-      if (newVol > 0 && isMuted) {
-        playerRef.current.unMute();
-        setIsMuted(false);
-      }
-      setVolume(newVol);
-    } catch {}
+      playerRef.current?.seekTo?.(clamped, true);
+      setCurrentTime(clamped);
+    } catch {
+      // Ignore seeks refused before the player is ready.
+    }
   };
 
   const handleVolumeChange = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const targetVol = Math.round(Math.max(0, Math.min(1, clickX / rect.width)) * 100);
-    changeVolume(targetVol);
+    if (rect.width === 0) return;
+    changeVolume(Math.round(clampRatio((e.clientX - rect.left) / rect.width) * 100));
   };
 
   const handleRateSelect = (rate: number) => {
-    if (!playerRef.current) return;
+    const player = playerRef.current;
+    if (!player) return;
     try {
-      playerRef.current.setPlaybackRate(rate);
+      player.setPlaybackRate(rate);
       setPlaybackRate(rate);
       setIsSpeedMenuOpen(false);
-    } catch {}
-  };
-
-  const toggleCaptions = useCallback(() => {
-    if (!playerRef.current) return;
-    try {
-      if (ccEnabled) {
-        playerRef.current.unloadModule?.('captions');
-        if (typeof playerRef.current.setOption === 'function') {
-          playerRef.current.setOption('captions', 'track', {});
-        }
-        setCcEnabled(false);
-      } else {
-        playerRef.current.loadModule?.('captions');
-        if (typeof playerRef.current.setOption === 'function') {
-          playerRef.current.setOption('captions', 'track', { languageCode: 'en' });
-        }
-        setCcEnabled(true);
-      }
     } catch {
-      setCcEnabled((prev) => !prev);
+      // Ignore a refused rate change on a partially initialised embed.
     }
-  }, [ccEnabled]);
+  };
 
   const handleQualityChange = (quality: string) => {
-    if (!playerRef.current) return;
+    const player = playerRef.current;
+    if (!player) return;
     try {
-      playerRef.current.setPlaybackQuality?.(quality);
+      player.setPlaybackQuality?.(quality);
       setCurrentQuality(quality === 'default' ? 'auto' : quality);
       setIsSettingsOpen(false);
-    } catch {}
-  };
-
-  const toggleFullscreen = useCallback(() => {
-    if (!wrapperRef.current) return;
-    if (!document.fullscreenElement) {
-      wrapperRef.current.requestFullscreen?.().catch(() => {});
-    } else {
-      document.exitFullscreen?.().catch(() => {});
+    } catch {
+      // Ignore a refused quality change.
     }
-  }, []);
-
-  // Format seconds into MM:SS or HH:MM:SS
-  const formatTimeStr = (totalSec: number) => {
-    const s = Math.floor(totalSec || 0);
-    const hrs = Math.floor(s / 3600);
-    const mins = Math.floor((s % 3600) / 60);
-    const secs = s % 60;
-    if (hrs > 0) {
-      return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-    }
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const qualityLabels: Record<string, string> = {
-    highres: '4K',
-    hd2160: '2160p',
-    hd1440: '1440p',
-    hd1080: '1080p',
-    hd720: '720p',
-    large: '480p',
-    medium: '360p',
-    small: '240p',
-    tiny: '144p',
-    auto: 'Auto'
-  };
-
-  const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const progressPercent = duration > 0 ? clampRatio(currentTime / duration) * 100 : 0;
 
   return (
     <div
@@ -584,7 +640,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
       data-testid="video-player"
       onMouseMove={handleMouseMove}
       onMouseLeave={() => {
-        if (isPlaying) {
+        if (isPlayingRef.current) {
           setShowControls(false);
           setIsSpeedMenuOpen(false);
           setIsSettingsOpen(false);
@@ -594,18 +650,20 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
       className="relative w-full aspect-video bg-[#030712] overflow-hidden select-none group"
     >
       {/* Fallback Error Panel */}
-      {hasError ? (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#030712] text-[#E9ECF1] p-6 text-center z-30">
+      {failure ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#030712] text-[#E9ECF1] p-6 text-center z-30" role="alert">
           <span className="material-symbols-outlined text-[44px] text-white mb-3">
-            warning
+            {failure === 'blocked' ? 'warning' : 'cloud_off'}
           </span>
           <h3 className="text-lg font-semibold text-[#E9ECF1] mb-2 font-heading">
-            This video can't be played here
+            {failure === 'blocked' ? "This video can't be played here" : 'Playback could not start'}
           </h3>
           <p className="text-sm text-[#B0B7C4] max-w-[420px] mb-6 leading-relaxed">
-            The owner may have disabled embedding, or the video is private or deleted.
+            {failure === 'blocked'
+              ? 'The owner may have disabled embedding, or the video is private or deleted. It has been marked unavailable in this course.'
+              : loadMessage}
           </p>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap justify-center">
             <a
               href={`https://www.youtube.com/watch?v=${videoId}`}
               target="_blank"
@@ -615,7 +673,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
               <span className="material-symbols-outlined text-[18px]">open_in_new</span>
               <span>Open on YouTube</span>
             </a>
-            {onNextVideo && (
+            {failure === 'transient' && onNextVideo && (
               <button
                 onClick={onNextVideo}
                 className="inline-flex items-center gap-2 h-10 px-4 rounded-lg bg-[#3B82F6] text-white hover:bg-[#2563EB] transition-colors text-sm font-medium"
@@ -676,7 +734,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
                 {/* Buffered track */}
                 <div
                   className="absolute top-0 bottom-0 left-0 bg-white/30 rounded-full pointer-events-none"
-                  style={{ width: `${bufferedPercent}%` }}
+                  style={{ width: `${clampRatio(bufferedPercent / 100) * 100}%` }}
                 />
 
                 {/* Progress track */}
@@ -691,9 +749,9 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
                 {hoverTime !== null && (
                   <div
                     className="absolute -top-8 px-1.5 py-0.5 rounded bg-black/80 text-white text-[10px] font-mono pointer-events-none whitespace-nowrap"
-                    style={{ left: `${hoverPercent}%`, transform: 'translateX(-50%)' }}
+                    style={{ left: `${clampRatio(hoverPercent / 100) * 100}%`, transform: 'translateX(-50%)' }}
                   >
-                    {formatTimeStr(hoverTime)}
+                    {formatClock(hoverTime)}
                   </div>
                 )}
               </div>
@@ -786,9 +844,9 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
 
                 {/* Time Display */}
                 <div className="font-mono text-[11px] text-[#94A3B8] ml-1.5 select-none whitespace-nowrap">
-                  <span className="text-white font-medium">{formatTimeStr(currentTime)}</span>
+                  <span className="text-white font-medium">{formatClock(currentTime)}</span>
                   {' / '}
-                  <span>{formatTimeStr(duration)}</span>
+                  <span>{formatClock(duration)}</span>
                 </div>
               </div>
 
@@ -821,6 +879,7 @@ export const YouTubePlayer: React.FC<YouTubePlayerProps> = ({
                     type="button"
                     onClick={() => { setIsSpeedMenuOpen(!isSpeedMenuOpen); setIsSettingsOpen(false); }}
                     title="Playback speed"
+                    aria-label="Playback speed"
                     className={`px-1.5 py-1 rounded text-[11px] font-mono font-semibold hover:bg-white/10 transition-colors focus:outline-none ${
                       playbackRate !== 1.0 ? 'text-[#3B82F6]' : 'text-[#CBD5E1] hover:text-white'
                     }`}

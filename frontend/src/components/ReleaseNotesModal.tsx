@@ -35,10 +35,10 @@ export const ReleaseNotesModal: React.FC<ReleaseNotesModalProps> = ({ isOpen, on
         </div>
         <ul className="space-y-3 text-sm leading-relaxed text-text-secondary">
           {[
-            'AI study guides now include richer Markdown notes, interactive highlights, quizzes, and flashcards.',
-            'Gemini key testing is clearer, with local token usage shown in the top bar and reset by Clear All Data.',
-            'Mobile playback, lesson switching, timestamp seeking, and keyboard navigation are more reliable.',
-            'YouTube imports now handle more link types, large playlists, unavailable embeds, and cached results.'
+            'Your library is safer: a corrupt or oversized backup file is now rejected with a clear message instead of half-importing, and you can merge a backup into your courses rather than replacing them.',
+            'Lesson progress is clamped and re-checked on load, so a corrupted position can no longer show a bar past 100% or resume past the end of a video.',
+            'Truncated playlists and lessons that can no longer be embedded are labelled in the sidebar instead of failing silently.',
+            'Import, notes export, and clipboard actions now report success or failure, and long playlists skip laying out off-screen lessons.'
           ].map(change => <li key={change} className="flex gap-2"><Check size={17} className="mt-0.5 shrink-0 text-success" />{change}</li>)}
         </ul>
         <button type="button" onClick={onClose} className="mt-6 h-10 w-full rounded-lg bg-accent text-sm font-semibold text-white hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">Continue learning</button>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { BookOpenText, Check, ChevronRight, Copy, KeyRound, Sparkles } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -32,12 +32,6 @@ export const AISessionNotes: React.FC<AISessionNotesProps> = ({ courseId, video,
     setFlippedCard(null);
   }, [courseId, video.videoId, initialTab]);
 
-  useEffect(() => {
-    const handleGenerate = () => { void handleGenerateNotes(); };
-    window.addEventListener('courseify:generate-ai-notes', handleGenerate);
-    return () => window.removeEventListener('courseify:generate-ai-notes', handleGenerate);
-  });
-
   const handleGenerateNotes = async () => {
     const apiKey = getGeminiApiKey();
     if (!apiKey) {
@@ -49,11 +43,19 @@ export const AISessionNotes: React.FC<AISessionNotesProps> = ({ courseId, video,
     setRequiresKeyUpdate(false);
     try {
       const result = await generateStudyNotes(apiKey, video);
-      saveStudyNotes(courseId, video.videoId, result);
       setStudyNotes(result);
       setSelectedAnswers({});
       setFlippedCard(null);
       setActiveTab('summary');
+      // Persist after showing it: a full quota must not discard a guide the
+      // user just paid for, and the message has to distinguish the two failures.
+      try {
+        saveStudyNotes(courseId, video.videoId, result);
+      } catch (saveError) {
+        const message = saveError instanceof Error ? saveError.message : 'The study guide could not be saved in this browser.';
+        setGenerationError(message);
+        onShowToast(message);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not generate AI notes.';
       setGenerationError(message);
@@ -63,6 +65,15 @@ export const AISessionNotes: React.FC<AISessionNotesProps> = ({ courseId, video,
       setIsGenerating(false);
     }
   };
+
+  const generateRef = useRef<() => Promise<void>>(async () => {});
+  generateRef.current = handleGenerateNotes;
+
+  useEffect(() => {
+    const handleGenerate = () => { void generateRef.current(); };
+    window.addEventListener('courseify:generate-ai-notes', handleGenerate);
+    return () => window.removeEventListener('courseify:generate-ai-notes', handleGenerate);
+  }, []);
 
   const copyNotes = async () => {
     if (!studyNotes) return;

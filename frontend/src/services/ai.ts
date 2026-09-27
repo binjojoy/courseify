@@ -50,7 +50,17 @@ export const getGeminiUsage = (apiKey = getGeminiApiKey()): GeminiUsage => {
   if (!apiKey) return EMPTY_USAGE;
   try {
     const value = localStorage.getItem(usageStorageKey(apiKey));
-    return value ? { ...EMPTY_USAGE, ...JSON.parse(value) } : EMPTY_USAGE;
+    if (!value) return EMPTY_USAGE;
+    const parsed: unknown = JSON.parse(value);
+    if (typeof parsed !== 'object' || parsed === null) return EMPTY_USAGE;
+    const raw = parsed as Record<string, unknown>;
+    const count = Number(raw.requestCount);
+    const tokens = Number(raw.totalTokens);
+    return {
+      requestCount: Number.isFinite(count) && count > 0 ? Math.floor(count) : 0,
+      totalTokens: Number.isFinite(tokens) && tokens > 0 ? Math.floor(tokens) : 0,
+      updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : null
+    };
   } catch {
     return EMPTY_USAGE;
   }
@@ -59,9 +69,10 @@ export const getGeminiUsage = (apiKey = getGeminiApiKey()): GeminiUsage => {
 const recordGeminiUsage = (apiKey: string, usage: { totalTokenCount?: number } | undefined) => {
   try {
     const current = getGeminiUsage(apiKey);
+    const reported = usage?.totalTokenCount;
     const updated: GeminiUsage = {
       requestCount: current.requestCount + 1,
-      totalTokens: current.totalTokens + (Number.isFinite(usage?.totalTokenCount) ? usage!.totalTokenCount! : 0),
+      totalTokens: current.totalTokens + (typeof reported === 'number' && Number.isFinite(reported) ? reported : 0),
       updatedAt: new Date().toISOString()
     };
     localStorage.setItem(usageStorageKey(apiKey), JSON.stringify(updated));
@@ -74,17 +85,81 @@ const recordGeminiUsage = (apiKey: string, usage: { totalTokenCount?: number } |
 const notesStorageKey = (courseId: string, videoId: string) =>
   `courseify:ai-notes:${encodeURIComponent(courseId)}:${encodeURIComponent(videoId)}`;
 
+const MAX_TEXT_FIELD = 20000;
+
+const asText = (value: unknown, fallback = '', maxLength = MAX_TEXT_FIELD): string =>
+  typeof value === 'string' ? value.slice(0, maxLength) : fallback;
+
+/**
+ * Coerce a stored/parsed study guide into the shape the UI relies on.
+ *
+ * Everything in this file arrives from somewhere untrusted: localStorage can be
+ * hand-edited or written by an older build, and `generateStudyNotes` parses a
+ * model response. `AISessionNotes` maps over `keyTakeaways` and `quizQuestions`
+ * without a guard, so an unexpected value would throw during render and blank
+ * the whole lesson page.
+ */
+const normalizeStudyNotes = (value: unknown): StudyNotes | null => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+
+  const keyTakeaways = Array.isArray(raw.keyTakeaways)
+    ? raw.keyTakeaways.filter((item): item is string => typeof item === 'string' && item.trim() !== '').slice(0, 20)
+    : [];
+
+  const highlights = Array.isArray(raw.timestampedHighlights)
+    ? raw.timestampedHighlights.flatMap((item): Array<{ time: string; seconds: number; label: string }> => {
+      if (typeof item !== 'object' || item === null) return [];
+      const entry = item as Record<string, unknown>;
+      const seconds = Number(entry.seconds);
+      if (!Number.isFinite(seconds) || seconds < 0) return [];
+      return [{ time: asText(entry.time, '0:00', 20), seconds: Math.floor(seconds), label: asText(entry.label, 'Moment', 300) }];
+    }).slice(0, 50)
+    : [];
+
+  const quizQuestions = Array.isArray(raw.quizQuestions)
+    ? raw.quizQuestions.flatMap((item): Array<StudyNotes['quizQuestions'][number]> => {
+      if (typeof item !== 'object' || item === null) return [];
+      const entry = item as Record<string, unknown>;
+      const options = Array.isArray(entry.options)
+        ? entry.options.filter((option): option is string => typeof option === 'string').slice(0, 8)
+        : [];
+      const answerIndex = Number(entry.answerIndex);
+      if (typeof entry.question !== 'string' || !entry.question.trim()) return [];
+      if (options.length < 2 || !Number.isInteger(answerIndex) || answerIndex < 0 || answerIndex >= options.length) return [];
+      return [{ question: entry.question.slice(0, 1000), options, answerIndex }];
+    }).slice(0, 20)
+    : [];
+
+  return {
+    oneSentenceSummary: asText(raw.oneSentenceSummary, 'No summary was generated.'),
+    keyTakeaways,
+    detailedNotes: asText(raw.detailedNotes),
+    timestampedHighlights: highlights,
+    quizQuestions
+  };
+};
+
 export const getSavedStudyNotes = (courseId: string, videoId: string): StudyNotes | null => {
   try {
     const value = localStorage.getItem(notesStorageKey(courseId, videoId));
-    return value ? JSON.parse(value) as StudyNotes : null;
+    if (!value) return null;
+    return normalizeStudyNotes(JSON.parse(value));
   } catch {
     return null;
   }
 };
 
+/**
+ * @throws when the browser refuses the write, so the caller can say the guide
+ * was generated but not saved instead of implying the request failed.
+ */
 export const saveStudyNotes = (courseId: string, videoId: string, notes: StudyNotes) => {
-  localStorage.setItem(notesStorageKey(courseId, videoId), JSON.stringify(notes));
+  try {
+    localStorage.setItem(notesStorageKey(courseId, videoId), JSON.stringify(notes));
+  } catch {
+    throw new Error('The study guide was generated but could not be saved in this browser. Clear some storage and try again.');
+  }
 };
 
 const requestGemini = async (apiKey: string, contents: string, json = false) => {
@@ -136,20 +211,17 @@ export const testGeminiApiKey = async (apiKey: string) => {
 export const generateStudyNotes = async (apiKey: string, video: VideoItem): Promise<StudyNotes> => {
   const prompt = `Create a substantial, accurate study guide for this YouTube lesson. The available source is only the title and description, not a transcript. Never claim you watched the video, invent lesson events, or invent timestamps. Use only timestamps explicitly present in the description. Where useful, add clearly labeled general background context without presenting it as a fact from the video. Return valid JSON with these keys: oneSentenceSummary (string), keyTakeaways (8-12 specific strings), detailedNotes (Markdown string), timestampedHighlights (array of {time, seconds, label}), and quizQuestions (exactly 10 items with {question, options: four distinct strings, answerIndex: integer}). Make detailedNotes useful rather than repetitive: start with a # heading, use ## section headings, explanatory paragraphs, nested bullets where appropriate, and a short ## Review section. Cover definitions, relationships, examples, common misunderstandings, and practical applications that are supported by the available source.\n\nLesson title: ${video.title}\nLesson description: ${(video.description || 'No description available.').slice(0, 4000)}`;
   const text = await requestGemini(apiKey, prompt, true);
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(text) as StudyNotes;
-    if (!parsed.oneSentenceSummary || !Array.isArray(parsed.keyTakeaways) || !Array.isArray(parsed.quizQuestions)) {
-      throw new Error('The response did not include the expected study guide fields.');
-    }
-    return {
-      oneSentenceSummary: parsed.oneSentenceSummary,
-      keyTakeaways: parsed.keyTakeaways,
-      detailedNotes: parsed.detailedNotes || '',
-      timestampedHighlights: Array.isArray(parsed.timestampedHighlights) ? parsed.timestampedHighlights : [],
-      quizQuestions: parsed.quizQuestions.filter(question => question.question && Array.isArray(question.options) && question.options.length === 4 && Number.isInteger(question.answerIndex) && question.answerIndex >= 0 && question.answerIndex < 4).slice(0, 10)
-    };
-  } catch (error) {
-    if (error instanceof SyntaxError) throw new Error('Gemini returned an unreadable study guide. Try generating it again.');
-    throw error;
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('Gemini returned an unreadable study guide. Try generating it again.');
   }
+  // The same coercion used for stored notes guards the model response, so a
+  // malformed array here cannot crash the tabs that map over it.
+  const notes = normalizeStudyNotes(parsed);
+  if (!notes || !notes.quizQuestions.length) {
+    throw new Error('The response did not include usable study guide content. Try generating it again.');
+  }
+  return notes;
 };
