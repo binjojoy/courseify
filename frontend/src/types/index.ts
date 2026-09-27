@@ -10,6 +10,14 @@ export interface Course {
   addedAt: string;
   lastOpenedAt: string;
   source?: CourseSource;
+  /**
+   * True when the source playlist is larger than the lessons stored locally.
+   * The import cap is 200 lessons; this makes the shortfall visible instead of
+   * silently handing back a short course.
+   */
+  truncated?: boolean;
+  /** Lessons the source playlist says it has, which may exceed `videos.length`. */
+  totalItemCount?: number;
 }
 
 export interface CourseSource {
@@ -17,6 +25,15 @@ export interface CourseSource {
   id: string;
   url: string;
 }
+
+/** Views the hash router can resolve. */
+export type ViewMode = 'home' | 'dashboard' | 'player' | 'privacy' | 'terms' | 'notfound' | 'audit';
+
+/**
+ * Shared navigation contract. Declared once so pages stop narrowing it to the
+ * three views they happen to use and then needing `as any` to reach the rest.
+ */
+export type NavigateFn = (view: ViewMode, courseId?: string, videoId?: string) => void;
 
 export interface VideoItem {
   videoId: string;

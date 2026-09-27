@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { BookOpenText, Check, ChevronRight, Copy, KeyRound, Sparkles } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -21,6 +21,8 @@ export const AISessionNotes: React.FC<AISessionNotesProps> = ({ courseId, video,
   const [activeTab, setActiveTab] = useState<StudyTab>('summary');
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
+  /** Shown while the service is retrying a transient failure, so a wait is not silent. */
+  const [retryNotice, setRetryNotice] = useState<string | null>(null);
   const [requiresKeyUpdate, setRequiresKeyUpdate] = useState(false);
   const [selectedAnswers, setSelectedAnswers] = useState<Record<number, number>>({});
   const [flippedCard, setFlippedCard] = useState<number | null>(null);
@@ -30,13 +32,8 @@ export const AISessionNotes: React.FC<AISessionNotesProps> = ({ courseId, video,
     setActiveTab(initialTab);
     setSelectedAnswers({});
     setFlippedCard(null);
+    setRetryNotice(null);
   }, [courseId, video.videoId, initialTab]);
-
-  useEffect(() => {
-    const handleGenerate = () => { void handleGenerateNotes(); };
-    window.addEventListener('courseify:generate-ai-notes', handleGenerate);
-    return () => window.removeEventListener('courseify:generate-ai-notes', handleGenerate);
-  });
 
   const handleGenerateNotes = async () => {
     const apiKey = getGeminiApiKey();
@@ -47,14 +44,29 @@ export const AISessionNotes: React.FC<AISessionNotesProps> = ({ courseId, video,
     setIsGenerating(true);
     setGenerationError(null);
     setRequiresKeyUpdate(false);
+    setRetryNotice(null);
     try {
-      const result = await generateStudyNotes(apiKey, video);
-      saveStudyNotes(courseId, video.videoId, result);
+      const result = await generateStudyNotes(apiKey, video, {
+        onRetry: (attempt) => {
+          setRetryNotice(`Gemini is busy right now \u2014 retrying (attempt ${attempt + 1})`);
+        }
+      });
+      setRetryNotice(null);
       setStudyNotes(result);
       setSelectedAnswers({});
       setFlippedCard(null);
       setActiveTab('summary');
+      // Persist after showing it: a full quota must not discard a guide the
+      // user just paid for, and the message has to distinguish the two failures.
+      try {
+        saveStudyNotes(courseId, video.videoId, result);
+      } catch (saveError) {
+        const message = saveError instanceof Error ? saveError.message : 'The study guide could not be saved in this browser.';
+        setGenerationError(message);
+        onShowToast(message);
+      }
     } catch (error) {
+      setRetryNotice(null);
       const message = error instanceof Error ? error.message : 'Could not generate AI notes.';
       setGenerationError(message);
       setRequiresKeyUpdate(error instanceof Error && /api key|key is invalid|API_KEY_INVALID|permission denied/i.test(error.message));
@@ -63,6 +75,15 @@ export const AISessionNotes: React.FC<AISessionNotesProps> = ({ courseId, video,
       setIsGenerating(false);
     }
   };
+
+  const generateRef = useRef<() => Promise<void>>(async () => {});
+  generateRef.current = handleGenerateNotes;
+
+  useEffect(() => {
+    const handleGenerate = () => { void generateRef.current(); };
+    window.addEventListener('courseify:generate-ai-notes', handleGenerate);
+    return () => window.removeEventListener('courseify:generate-ai-notes', handleGenerate);
+  }, []);
 
   const copyNotes = async () => {
     if (!studyNotes) return;
@@ -99,6 +120,7 @@ export const AISessionNotes: React.FC<AISessionNotesProps> = ({ courseId, video,
         </div>
       </div>
 
+      {retryNotice && <div role="status" className="mt-3 rounded-lg border border-border-default bg-bg-hover px-3 py-2 text-sm leading-relaxed text-text-secondary">{retryNotice}</div>}
       {generationError && <div role="alert" className="mt-3 rounded-lg border border-error/30 bg-error-subtle px-3 py-2 text-sm leading-relaxed text-error">{generationError}{requiresKeyUpdate && <button type="button" onClick={onOpenKeySettings} className="ml-2 font-semibold underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">Update Gemini key</button>}</div>}
       {!getGeminiApiKey() && <button type="button" onClick={onOpenKeySettings} className="mt-4 inline-flex items-center gap-2 text-sm text-text-secondary hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"><KeyRound size={15} />Configure Gemini key</button>}
       {!studyNotes ? (

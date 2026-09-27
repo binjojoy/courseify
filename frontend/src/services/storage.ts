@@ -1,11 +1,28 @@
-import { BackupData, Course, VideoItem, CourseProgress, CourseNotes, UserProfile, AppSettings, RecentNoteItem, LearningStats, FavoriteVideo } from '../types';
+import { BackupData, Course, CourseSource, VideoItem, CourseProgress, CourseNotes, UserProfile, AppSettings, RecentNoteItem, LearningStats, FavoriteVideo, VideoProgress, VideoNote } from '../types';
 import { DEFAULT_PROFILE, DEFAULT_SETTINGS } from './sampleData';
 import { getPlayableVideos } from '../utils/course';
+import { clampRatio, clampSeconds, computeCourseMetrics, type CourseMetrics } from '../utils/progress';
+import {
+  BackupValidationError,
+  analyzeImport,
+  parseBackupFile,
+  resolveImportCourses,
+  type ImportAnalysis,
+  type ImportStrategy
+} from './backup';
 
 const PREFIX = 'courseify:v1:';
 const GEMINI_API_KEY = 'courseify:gemini-api-key';
+const AI_NOTES_PREFIX = 'courseify:ai-notes:';
+const GEMINI_USAGE_PREFIX = 'courseify:gemini-usage:';
 const ACTIVITY_KEY = `${PREFIX}watch-activity`;
 const ACCESS_DAYS_KEY = `${PREFIX}access-days`;
+// Deliberately outside PREFIX: it is device bookkeeping, not user course data, so
+// a "replace" import must not wipe the record of the last real backup file.
+const LAST_BACKUP_KEY = 'courseify:last-backup-at';
+
+const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const getDateKey = (date = new Date()) => {
   const year = date.getFullYear();
@@ -14,6 +31,38 @@ const getDateKey = (date = new Date()) => {
   return `${year}-${month}-${day}`;
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/** A timestamp we are willing to show in the UI. Anything else becomes `fallback`. */
+function safeTimestamp(value: unknown, fallback: string): string {
+  if (typeof value !== 'string' || !ISO_TIMESTAMP_PATTERN.test(value)) return fallback;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? fallback : value;
+}
+
+function safeDateKey(value: unknown): string | null {
+  return typeof value === 'string' && DATE_KEY_PATTERN.test(value) ? value : null;
+}
+
+function safeNumber(value: unknown, fallback = 0): number {
+  const numeric = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function safeString(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+/**
+ * Reads are the trust boundary.
+ *
+ * Everything below localStorage can be hand-edited, written by an older version
+ * of the app, or arrive from an imported backup. Each getter therefore coerces
+ * and range-checks its value instead of handing a half-typed object to React,
+ * which is what previously let a corrupt `positionSec: "abc"` reach the player
+ * and produce a NaN progress bar.
+ */
 class StorageService {
   private hasInitialized = false;
 
@@ -60,19 +109,26 @@ class StorageService {
     }
   }
 
+  private readJson<T>(key: string): unknown {
+    try {
+      const data = localStorage.getItem(key);
+      if (data === null) return null;
+      return JSON.parse(data);
+    } catch {
+      // Corrupt or unreadable payloads behave as "no data" instead of
+      // propagating a parse error into a render.
+      return null;
+    }
+  }
+
   // --- Profile ---
   getProfile(): UserProfile {
-    try {
-      const data = localStorage.getItem(`${PREFIX}profile`);
-      if (data) {
-        const parsed = JSON.parse(data);
-        if (parsed.name === 'Asha') parsed.name = 'User';
-        return parsed;
-      }
-      return DEFAULT_PROFILE;
-    } catch {
-      return DEFAULT_PROFILE;
+    const parsed = this.readJson(`${PREFIX}profile`);
+    if (isRecord(parsed) && typeof parsed.name === 'string') {
+      const name = parsed.name.trim();
+      return { name: name === 'Asha' || !name ? 'User' : name };
     }
+    return DEFAULT_PROFILE;
   }
 
   saveProfile(profile: UserProfile): void {
@@ -86,17 +142,14 @@ class StorageService {
 
   // --- Settings ---
   getSettings(): AppSettings {
-    try {
-      const data = localStorage.getItem(`${PREFIX}settings`);
-      return data ? { ...DEFAULT_SETTINGS, ...JSON.parse(data) } : DEFAULT_SETTINGS;
-    } catch {
-      return DEFAULT_SETTINGS;
-    }
+    const parsed = this.readJson(`${PREFIX}settings`);
+    if (!isRecord(parsed)) return DEFAULT_SETTINGS;
+    return normalizeSettings(parsed, DEFAULT_SETTINGS);
   }
 
   saveSettings(settings: AppSettings): void {
     try {
-      localStorage.setItem(`${PREFIX}settings`, JSON.stringify(settings));
+      localStorage.setItem(`${PREFIX}settings`, JSON.stringify(normalizeSettings({ ...settings }, DEFAULT_SETTINGS)));
       this.triggerUpdate();
     } catch (e) {
       this.handleQuotaError(e);
@@ -105,20 +158,29 @@ class StorageService {
 
   // --- Courses ---
   getCourses(): Course[] {
-    try {
-      const data = localStorage.getItem(`${PREFIX}courses`);
-      return data ? JSON.parse(data) : [];
-    } catch {
-      return [];
+    const parsed = this.readJson(`${PREFIX}courses`);
+    if (!Array.isArray(parsed)) return [];
+    const now = new Date().toISOString();
+    const seen = new Set<string>();
+    const courses: Course[] = [];
+    for (const value of parsed) {
+      const course = normalizeCourse(value, now);
+      if (!course || seen.has(course.id)) continue;
+      seen.add(course.id);
+      courses.push(course);
     }
+    return courses;
   }
 
-  saveCourses(courses: Course[]): void {
+  /** @returns false when the write failed (quota/private mode) so callers can roll back. */
+  saveCourses(courses: Course[]): boolean {
     try {
       localStorage.setItem(`${PREFIX}courses`, JSON.stringify(courses));
       this.triggerUpdate();
+      return true;
     } catch (e) {
       this.handleQuotaError(e);
+      return false;
     }
   }
 
@@ -127,15 +189,44 @@ class StorageService {
     return courses.find(c => c.id === courseId) || null;
   }
 
-  addOrUpdateCourse(course: Course): void {
+  addOrUpdateCourse(course: Course): boolean {
     const courses = this.getCourses();
     const idx = courses.findIndex(c => c.id === course.id);
     if (idx >= 0) {
-      courses[idx] = { ...courses[idx], ...course };
+      // Merge so a re-import refreshes metadata without wiping local fields
+      // such as lastOpenedAt that the import does not carry.
+      courses[idx] = { ...courses[idx], ...course, addedAt: courses[idx].addedAt };
     } else {
       courses.unshift({ ...course, addedAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString() });
     }
-    this.saveCourses(courses);
+    return this.saveCourses(courses);
+  }
+
+  /**
+   * Persist a freshly ingested course and its lessons as one unit.
+   *
+   * The lesson list is written first: if that write fails (usually a quota
+   * error) the course is never registered, so the user cannot end up with a
+   * course card that opens onto an empty player. The previous lesson list is
+   * snapshotted and restored if registering the course then fails.
+   *
+   * @returns true when both writes landed.
+   */
+  addCourseWithVideos(course: Course, videos: VideoItem[]): boolean {
+    const videosKey = `${PREFIX}course:${course.id}:videos`;
+    const previousVideos = localStorage.getItem(videosKey);
+
+    if (!this.saveCourseVideos(course.id, videos)) {
+      if (previousVideos === null) localStorage.removeItem(videosKey);
+      else localStorage.setItem(videosKey, previousVideos);
+      return false;
+    }
+
+    if (this.addOrUpdateCourse(course)) return true;
+
+    if (previousVideos === null) localStorage.removeItem(videosKey);
+    else localStorage.setItem(videosKey, previousVideos);
+    return false;
   }
 
   touchCourse(courseId: string): void {
@@ -154,6 +245,9 @@ class StorageService {
       localStorage.removeItem(`${PREFIX}course:${courseId}:videos`);
       localStorage.removeItem(`${PREFIX}course:${courseId}:progress`);
       localStorage.removeItem(`${PREFIX}course:${courseId}:notes`);
+      // AI session notes are keyed by course, not by the v1 prefix, so they
+      // used to survive "remove course" and reappear on re-import.
+      this.removeKeysWithPrefix(AI_NOTES_PREFIX, courseId);
       const favorites = this.getFavorites().filter(favorite => favorite.courseId !== courseId);
       localStorage.setItem(`${PREFIX}favorites`, JSON.stringify(favorites));
       this.triggerUpdate();
@@ -164,40 +258,70 @@ class StorageService {
 
   // --- Course Videos ---
   getCourseVideos(courseId: string): VideoItem[] {
-    try {
-      const data = localStorage.getItem(`${PREFIX}course:${courseId}:videos`);
-      return data ? JSON.parse(data) : [];
-    } catch {
-      return [];
-    }
+    const parsed = this.readJson(`${PREFIX}course:${courseId}:videos`);
+    if (!Array.isArray(parsed)) return [];
+    const videos: VideoItem[] = [];
+    const seen = new Set<string>();
+    parsed.forEach((value, index) => {
+      const video = normalizeVideoItem(value, index);
+      if (!video || seen.has(video.videoId)) return;
+      seen.add(video.videoId);
+      videos.push(video);
+    });
+    return videos;
   }
 
-  saveCourseVideos(courseId: string, videos: VideoItem[]): void {
+  /** @returns false when the write failed (quota/private mode) so callers can roll back. */
+  saveCourseVideos(courseId: string, videos: VideoItem[]): boolean {
     try {
-      const sanitized = videos.map(v => ({
+      const sanitized = videos.map((v, index) => ({
         ...v,
+        position: Number.isFinite(v.position) ? v.position : index,
         description: (v.description || '').substring(0, 4000)
       }));
       localStorage.setItem(`${PREFIX}course:${courseId}:videos`, JSON.stringify(sanitized));
       this.triggerUpdate();
+      return true;
     } catch (e) {
       this.handleQuotaError(e);
+      return false;
     }
+  }
+
+  /**
+   * Record that a lesson can no longer be played, so the sidebar can label it
+   * instead of offering a dead play button.
+   *
+   * Only ever called for the player's permanent error codes (100/101/150); a
+   * transient network failure must not permanently disable a lesson.
+   *
+   * @returns true when the stored list actually changed.
+   */
+  markVideoUnavailable(courseId: string, videoId: string): boolean {
+    const videos = this.getCourseVideos(courseId);
+    const target = videos.find(v => v.videoId === videoId);
+    if (!target || target.unavailable) return false;
+
+    this.saveCourseVideos(courseId, videos.map(v => (
+      v.videoId === videoId
+        ? { ...v, unavailable: true, title: v.title || 'Unavailable video', durationSec: 0, durationFormatted: '00:00' }
+        : v
+    )));
+    return true;
   }
 
   // --- Course Progress ---
   getCourseProgress(courseId: string): CourseProgress {
-    try {
-      const data = localStorage.getItem(`${PREFIX}course:${courseId}:progress`);
-      if (data) return JSON.parse(data);
-    } catch {}
-
-    return {
-      lastVideoId: '',
-      updatedAt: new Date().toISOString(),
-      completedAt: null,
-      videos: {}
-    };
+    const parsed = this.readJson(`${PREFIX}course:${courseId}:progress`);
+    if (!isRecord(parsed)) {
+      return {
+        lastVideoId: '',
+        updatedAt: new Date().toISOString(),
+        completedAt: null,
+        videos: {}
+      };
+    }
+    return normalizeCourseProgress(parsed);
   }
 
   saveCourseProgress(courseId: string, progress: CourseProgress): void {
@@ -221,17 +345,12 @@ class StorageService {
   setVideoCompleted(courseId: string, videoId: string, completed: boolean): { completed: boolean; courseCompleteTriggered: boolean } {
     const progress = this.getCourseProgress(courseId);
     const videos = this.getCourseVideos(courseId);
-    const currentStatus = !!progress.videos[videoId]?.completed;
 
     if (!progress.videos[videoId]) {
       progress.videos[videoId] = { completed, positionSec: 0 };
     } else {
       progress.videos[videoId].completed = completed;
-      if (completed) {
-        progress.videos[videoId].completedAt = new Date().toISOString();
-      } else {
-        progress.videos[videoId].completedAt = null;
-      }
+      progress.videos[videoId].completedAt = completed ? new Date().toISOString() : null;
     }
 
     progress.updatedAt = new Date().toISOString();
@@ -248,13 +367,17 @@ class StorageService {
 
   saveVideoPosition(courseId: string, videoId: string, positionSec: number): void {
     const progress = this.getCourseProgress(courseId);
+    const video = this.getCourseVideos(courseId).find(v => v.videoId === videoId);
+    // A resume point beyond the lesson length lands the user on the ended
+    // screen, so clamp to the duration we actually know about.
+    const clamped = clampSeconds(positionSec, video?.durationSec || undefined);
     progress.lastVideoId = videoId;
     progress.updatedAt = new Date().toISOString();
-    
+
     if (!progress.videos[videoId]) {
-      progress.videos[videoId] = { completed: false, positionSec: Math.floor(positionSec) };
+      progress.videos[videoId] = { completed: false, positionSec: clamped };
     } else {
-      progress.videos[videoId].positionSec = Math.floor(positionSec);
+      progress.videos[videoId].positionSec = clamped;
     }
 
     this.saveCourseProgress(courseId, progress);
@@ -274,21 +397,26 @@ class StorageService {
   }
 
   private getWatchActivity(): Record<string, number> {
-    try {
-      const data = localStorage.getItem(ACTIVITY_KEY);
-      return data ? JSON.parse(data) : {};
-    } catch {
-      return {};
+    const parsed = this.readJson(ACTIVITY_KEY);
+    if (!isRecord(parsed)) return {};
+    const activity: Record<string, number> = {};
+    for (const [date, value] of Object.entries(parsed)) {
+      if (!safeDateKey(date)) continue;
+      const seconds = safeNumber(value);
+      if (seconds > 0) activity[date] = Math.min(seconds, 86400);
     }
+    return activity;
   }
 
   private getAccessDays(): string[] {
-    try {
-      const data = localStorage.getItem(ACCESS_DAYS_KEY);
-      return data ? JSON.parse(data) : [];
-    } catch {
-      return [];
+    const parsed = this.readJson(ACCESS_DAYS_KEY);
+    if (!Array.isArray(parsed)) return [];
+    const days = new Set<string>();
+    for (const day of parsed) {
+      const key = safeDateKey(day);
+      if (key) days.add(key);
     }
+    return [...days].sort();
   }
 
   resetCourseProgress(courseId: string): void {
@@ -303,12 +431,17 @@ class StorageService {
 
   // --- Course Notes ---
   getCourseNotes(courseId: string): CourseNotes {
-    try {
-      const data = localStorage.getItem(`${PREFIX}course:${courseId}:notes`);
-      return data ? JSON.parse(data) : {};
-    } catch {
-      return {};
+    const parsed = this.readJson(`${PREFIX}course:${courseId}:notes`);
+    if (!isRecord(parsed)) return {};
+    const notes: CourseNotes = {};
+    for (const [videoId, value] of Object.entries(parsed)) {
+      if (!isRecord(value) || typeof value.text !== 'string' || !value.text) continue;
+      notes[videoId] = {
+        text: value.text,
+        updatedAt: safeTimestamp(value.updatedAt, new Date().toISOString())
+      } satisfies VideoNote;
     }
+    return notes;
   }
 
   saveCourseNotes(courseId: string, notes: CourseNotes): void {
@@ -345,12 +478,26 @@ class StorageService {
 
   // --- Favorites (Videos Across Courses) ---
   getFavorites(): FavoriteVideo[] {
-    try {
-      const data = localStorage.getItem(`${PREFIX}favorites`);
-      return data ? JSON.parse(data) : [];
-    } catch {
-      return [];
+    const parsed = this.readJson(`${PREFIX}favorites`);
+    if (!Array.isArray(parsed)) return [];
+    const now = new Date().toISOString();
+    const favorites: FavoriteVideo[] = [];
+    const seen = new Set<string>();
+    for (const value of parsed) {
+      if (!isRecord(value) || typeof value.videoId !== 'string' || !value.videoId) continue;
+      if (seen.has(value.videoId)) continue;
+      seen.add(value.videoId);
+      favorites.push({
+        courseId: safeString(value.courseId),
+        courseTitle: safeString(value.courseTitle, 'Course'),
+        videoId: value.videoId,
+        title: safeString(value.title, 'Untitled lesson'),
+        durationFormatted: safeString(value.durationFormatted, '00:00'),
+        thumbnailUrl: safeString(value.thumbnailUrl),
+        addedAt: safeTimestamp(value.addedAt, now)
+      });
     }
+    return favorites;
   }
 
   isFavorite(videoId: string): boolean {
@@ -383,39 +530,15 @@ class StorageService {
   }
 
   // --- Progress Metrics ---
-  getCourseMetrics(courseId: string) {
+  /**
+   * All completion maths lives in {@link computeCourseMetrics} so the sidebar,
+   * dashboard and player cannot disagree about the same course.
+   */
+  getCourseMetrics(courseId: string): CourseMetrics {
     const course = this.getCourse(courseId);
     const videos = this.getCourseVideos(courseId);
     const progress = this.getCourseProgress(courseId);
-
-    const playableVideos = getPlayableVideos(videos);
-    const totalVideos = playableVideos.length;
-    const completedVideos = playableVideos.filter(v => progress.videos[v.videoId]?.completed).length;
-    const completionPercent = totalVideos > 0 ? Math.round((completedVideos / totalVideos) * 100) : 0;
-
-    let totalDurationSec = playableVideos.reduce((acc, v) => acc + (v.durationSec || 0), 0);
-    if (totalDurationSec === 0) {
-      totalDurationSec = course?.totalDurationSec || 0;
-    }
-
-    let watchedDurationSec = 0;
-    for (const v of playableVideos) {
-      if (progress.videos[v.videoId]?.completed) {
-        watchedDurationSec += v.durationSec || 0;
-      } else if (progress.videos[v.videoId]?.positionSec) {
-        watchedDurationSec += Math.min(progress.videos[v.videoId].positionSec, v.durationSec || 0);
-      }
-    }
-
-    return {
-      totalVideos,
-      completedVideos,
-      completionPercent,
-      totalDurationSec,
-      watchedDurationSec,
-      isCompleted: totalVideos > 0 && completedVideos === totalVideos,
-      lastVideoId: progress.lastVideoId && videos.some(v => v.videoId === progress.lastVideoId) ? progress.lastVideoId : playableVideos[0]?.videoId || ''
-    };
+    return computeCourseMetrics(videos, progress, course?.totalDurationSec);
   }
 
   // --- Recent Notes Query ---
@@ -493,18 +616,73 @@ class StorageService {
     };
   }
 
+  private removeKeysWithPrefix(prefix: string, suffix?: string): number {
+    if (typeof localStorage === 'undefined') return 0;
+    let removed = 0;
+    // localStorage enumeration is a live key list, so collect first, then write.
+    const doomed = Object.keys(localStorage).filter(key => {
+      if (!key.startsWith(prefix)) return false;
+      return suffix === undefined || key === `${prefix}${suffix}` || key.startsWith(`${prefix}${suffix}:`);
+    });
+    for (const key of doomed) {
+      localStorage.removeItem(key);
+      removed += 1;
+    }
+    return removed;
+  }
+
+  /**
+   * Wipe every Courseify key.
+   *
+   * AI session notes are stored under `courseify:ai-notes:*` and the Gemini key
+   * under `courseify:gemini-api-key`, neither of which carries the `v1` prefix.
+   * They were previously left behind, so "clear all my data" still surfaced
+   * old AI answers and kept the user's API key on the device.
+   */
   clearData(): void {
-    Object.keys(localStorage)
-      .filter(key => key.startsWith(PREFIX))
-      .forEach(key => localStorage.removeItem(key));
+    this.removeKeysWithPrefix(PREFIX);
+    this.removeKeysWithPrefix(AI_NOTES_PREFIX);
+    this.removeKeysWithPrefix(GEMINI_USAGE_PREFIX);
     localStorage.removeItem(GEMINI_API_KEY);
+    localStorage.removeItem('courseify:last-seen-release');
+    localStorage.removeItem(LAST_BACKUP_KEY);
+    window.dispatchEvent(new Event('courseify:gemini-key-changed'));
+    window.dispatchEvent(new Event('courseify:gemini-usage-updated'));
     this.hasInitialized = false;
     this.init();
     this.triggerUpdate();
   }
 
   // --- Export / Import JSON Backup (ST-5) ---
-  exportBackup(): string {
+
+  /**
+   * When the user last exported a backup file, or null if never.
+   *
+   * Courseify only stores data in this browser, so clearing site data (or
+   * switching browsers/devices) is unrecoverable without a file. The dashboard
+   * uses this to surface a reminder rather than quietly hoping they remember.
+   */
+  getLastBackupAt(): string | null {
+    try {
+      const value = localStorage.getItem(LAST_BACKUP_KEY);
+      if (!value) return null;
+      const parsed = Date.parse(value);
+      return Number.isNaN(parsed) ? null : value;
+    } catch {
+      return null;
+    }
+  }
+
+  recordBackupExport(): void {
+    try {
+      localStorage.setItem(LAST_BACKUP_KEY, new Date().toISOString());
+      this.triggerUpdate();
+    } catch {
+      // A full quota must not break the export the user just completed.
+    }
+  }
+
+  exportBackup(): BackupData {
     const backup: BackupData = {
       schemaVersion: 3,
       exportedAt: new Date().toISOString(),
@@ -525,72 +703,88 @@ class StorageService {
       };
     }
 
-    return JSON.stringify(backup, null, 2);
+    return backup;
   }
 
-  private validateBackup(value: unknown): value is BackupData {
-    if (!value || typeof value !== 'object') return false;
-    const backup = value as Partial<BackupData>;
-    if (backup.schemaVersion !== 3 || !Array.isArray(backup.courses) || !Array.isArray(backup.favorites)) return false;
-    if (!backup.profile || typeof backup.profile.name !== 'string') return false;
-    if (!backup.settings || typeof backup.settings !== 'object' || !backup.courseData || typeof backup.courseData !== 'object') return false;
-    if (!backup.watchActivity || typeof backup.watchActivity !== 'object' || !Array.isArray(backup.accessDays)) return false;
-    return backup.courses.every(course => !!course && typeof course.id === 'string' && typeof course.title === 'string')
-      && Object.entries(backup.courseData).every(([id, data]) => id && !!data && Array.isArray(data.videos) && !!data.progress && typeof data.progress === 'object' && !!data.notes && typeof data.notes === 'object');
-  }
-
-  private normalizeBackup(value: unknown): BackupData | null {
-    if (!value || typeof value !== 'object') return null;
-    const raw = value as Partial<Omit<BackupData, 'schemaVersion'>> & { schemaVersion?: number };
-    if (raw.schemaVersion !== 2 && raw.schemaVersion !== 3) return null;
-    return {
-      schemaVersion: 3,
-      exportedAt: raw.exportedAt || new Date().toISOString(),
-      profile: raw.profile as UserProfile,
-      settings: raw.settings as AppSettings,
-      courses: raw.courses || [],
-      favorites: raw.favorites || [],
-      watchActivity: raw.watchActivity || {},
-      accessDays: raw.accessDays || [],
-      courseData: raw.courseData || {}
-    };
-  }
-
-  importBackup(jsonString: string): boolean {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(jsonString);
-    } catch {
-      return false;
+  /**
+   * Validate a candidate file without writing anything, so the UI can show the
+   * conflict summary before the user commits to an import strategy.
+   */
+  inspectBackup(jsonString: string): { backup: BackupData; analysis: ImportAnalysis } {
+    const backup = parseBackupFile(jsonString);
+    const existingCourses = this.getCourses();
+    const existingCourseData: BackupData['courseData'] = {};
+    for (const course of existingCourses) {
+      existingCourseData[course.id] = {
+        videos: this.getCourseVideos(course.id),
+        progress: this.getCourseProgress(course.id),
+        notes: this.getCourseNotes(course.id)
+      };
     }
-    const backup = this.normalizeBackup(parsed);
-    if (!backup || !this.validateBackup(backup)) return false;
+    return { backup, analysis: analyzeImport(backup, existingCourses, existingCourseData) };
+  }
+
+  /**
+   * Import a validated backup.
+   *
+   * Writes are staged through a snapshot so a quota error halfway through
+   * restores the previous data instead of leaving the user with a half-imported
+   * library.
+   *
+   * @throws {BackupValidationError} when the file is not a usable backup.
+   */
+  importBackup(jsonString: string, strategy: ImportStrategy = 'replace'): ImportAnalysis {
+    const { backup, analysis } = this.inspectBackup(jsonString);
+    const existingCourses = this.getCourses();
+    const existingCourseData: BackupData['courseData'] = {};
+    for (const course of existingCourses) {
+      existingCourseData[course.id] = {
+        videos: this.getCourseVideos(course.id),
+        progress: this.getCourseProgress(course.id),
+        notes: this.getCourseNotes(course.id)
+      };
+    }
+
+    const resolved = strategy === 'merge'
+      ? resolveImportCourses(backup, existingCourses, existingCourseData, 'merge')
+      : resolveImportCourses(backup, existingCourses, existingCourseData, 'replace');
+
     const previous = new Map<string, string>();
     try {
-      Object.keys(localStorage).filter(key => key.startsWith(PREFIX)).forEach(key => {
+      for (const key of Object.keys(localStorage).filter(key => key.startsWith(PREFIX))) {
         const value = localStorage.getItem(key);
         if (value !== null) previous.set(key, value);
-      });
+      }
 
-      Object.keys(localStorage).filter(key => key.startsWith(PREFIX)).forEach(key => localStorage.removeItem(key));
+      if (strategy === 'replace') {
+        for (const key of Object.keys(localStorage).filter(key => key.startsWith(PREFIX))) {
+          localStorage.removeItem(key);
+        }
+      }
+
       localStorage.setItem(`${PREFIX}profile`, JSON.stringify(backup.profile));
       localStorage.setItem(`${PREFIX}settings`, JSON.stringify(backup.settings));
-      localStorage.setItem(`${PREFIX}courses`, JSON.stringify(backup.courses));
-      localStorage.setItem(`${PREFIX}favorites`, JSON.stringify(backup.favorites));
-      localStorage.setItem(ACTIVITY_KEY, JSON.stringify(backup.watchActivity));
-      localStorage.setItem(ACCESS_DAYS_KEY, JSON.stringify(backup.accessDays));
-      for (const [id, data] of Object.entries(backup.courseData)) {
+      localStorage.setItem(`${PREFIX}courses`, JSON.stringify(resolved.courses));
+      const favorites = strategy === 'merge' ? dedupeFavorites([...this.getFavorites(), ...backup.favorites]) : backup.favorites;
+      localStorage.setItem(`${PREFIX}favorites`, JSON.stringify(favorites));
+      localStorage.setItem(ACTIVITY_KEY, JSON.stringify(mergeCounters(this.getWatchActivity(), backup.watchActivity, strategy)));
+      localStorage.setItem(ACCESS_DAYS_KEY, JSON.stringify([...new Set([...this.getAccessDays(), ...backup.accessDays])].sort()));
+      for (const [id, data] of Object.entries(resolved.courseData)) {
         localStorage.setItem(`${PREFIX}course:${id}:videos`, JSON.stringify(data.videos));
         localStorage.setItem(`${PREFIX}course:${id}:progress`, JSON.stringify(data.progress));
         localStorage.setItem(`${PREFIX}course:${id}:notes`, JSON.stringify(data.notes));
       }
       this.triggerUpdate();
-      return true;
+      return analysis;
     } catch (e) {
-      Object.keys(localStorage).filter(key => key.startsWith(PREFIX)).forEach(key => localStorage.removeItem(key));
+      for (const key of Object.keys(localStorage).filter(key => key.startsWith(PREFIX))) {
+        localStorage.removeItem(key);
+      }
       previous.forEach((value, key) => localStorage.setItem(key, value));
-      console.error('Import backup failed:', e);
-      return false;
+      throw new BackupValidationError(
+        'INVALID_COURSE_DATA',
+        'There was not enough browser storage to finish importing. Nothing was changed - try exporting a smaller backup.'
+      );
     }
   }
 
@@ -610,9 +804,126 @@ class StorageService {
     });
   }
 
-  private handleQuotaError(e: any) {
+  private handleQuotaError(e: unknown) {
+    const isQuota = typeof DOMException !== 'undefined'
+      && e instanceof DOMException
+      && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22);
+    // A silent failure here is how a user loses a note without being told, so
+    // the write failure is surfaced as an event the shell turns into a toast.
+    this.notifyStorageError(isQuota
+      ? 'This browser is out of storage space, so the last change was not saved. Export a backup and clear old data to free space.'
+      : 'This browser refused to save the last change. Check that site data is allowed for this page.');
     console.error('LocalStorage write failed:', e);
+  }
+
+  private notifyStorageError(message: string) {
+    if (typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent('courseify:storage-error', { detail: { message } }));
   }
 }
 
+function dedupeFavorites(favorites: FavoriteVideo[]): FavoriteVideo[] {
+  const seen = new Set<string>();
+  const result: FavoriteVideo[] = [];
+  for (const favorite of favorites) {
+    if (seen.has(favorite.videoId)) continue;
+    seen.add(favorite.videoId);
+    result.push(favorite);
+  }
+  return result;
+}
+
+function mergeCounters(
+  existing: Record<string, number>,
+  incoming: Record<string, number>,
+  strategy: ImportStrategy
+): Record<string, number> {
+  if (strategy === 'replace') return incoming;
+  const merged: Record<string, number> = { ...existing };
+  for (const [date, seconds] of Object.entries(incoming)) {
+    // Keep the larger of the two: a merge should not erase watched time.
+    merged[date] = Math.max(merged[date] ?? 0, seconds);
+  }
+  return merged;
+}
+
+function normalizeSettings(raw: Record<string, unknown>, defaults: AppSettings): AppSettings {
+  const threshold = safeNumber(raw.autoCompleteThreshold, defaults.autoCompleteThreshold);
+  const goal = safeNumber(raw.dailyFocusGoalMinutes, defaults.dailyFocusGoalMinutes ?? 60);
+  const firstAccessDate = safeDateKey(raw.firstAccessDate);
+  return {
+    autoplayNext: typeof raw.autoplayNext === 'boolean' ? raw.autoplayNext : defaults.autoplayNext,
+    autoCompleteOnEnd: typeof raw.autoCompleteOnEnd === 'boolean' ? raw.autoCompleteOnEnd : defaults.autoCompleteOnEnd,
+    // Outside 0.5..1 the auto-complete rule fires on load or effectively never.
+    autoCompleteThreshold: Math.min(1, Math.max(0.5, clampRatio(threshold || defaults.autoCompleteThreshold))),
+    theme: raw.theme === 'dark' ? 'dark' : 'light',
+    dailyFocusGoalMinutes: Math.min(1440, Math.max(1, Math.round(goal))),
+    firstAccessDate: firstAccessDate ?? defaults.firstAccessDate
+  };
+}
+
+function normalizeCourse(raw: unknown, now: string): Course | null {
+  if (!isRecord(raw) || typeof raw.id !== 'string' || !raw.id) return null;
+  const rawSource = isRecord(raw.source) ? raw.source : undefined;
+  const sourceType = rawSource?.type;
+  const source: CourseSource | undefined = sourceType === 'playlist' || sourceType === 'video'
+    ? { type: sourceType, id: safeString(rawSource?.id), url: safeString(rawSource?.url) }
+    : undefined;
+  const totalItemCount = safeNumber(raw.totalItemCount, 0);
+
+  return {
+    id: raw.id,
+    title: safeString(raw.title, 'Untitled course'),
+    channelTitle: safeString(raw.channelTitle, 'YouTube Creator'),
+    thumbnailUrl: safeString(raw.thumbnailUrl),
+    videoCount: Math.max(0, Math.round(safeNumber(raw.videoCount))),
+    totalDurationSec: Math.max(0, Math.round(safeNumber(raw.totalDurationSec))),
+    totalDurationFormatted: typeof raw.totalDurationFormatted === 'string' ? raw.totalDurationFormatted : undefined,
+    description: typeof raw.description === 'string' ? raw.description : undefined,
+    addedAt: safeTimestamp(raw.addedAt, now),
+    lastOpenedAt: safeTimestamp(raw.lastOpenedAt, now),
+    source,
+    truncated: raw.truncated === true || undefined,
+    totalItemCount: totalItemCount > 0 ? Math.round(totalItemCount) : undefined
+  };
+}
+
+function normalizeVideoItem(raw: unknown, index: number): VideoItem | null {
+  if (!isRecord(raw) || typeof raw.videoId !== 'string' || !raw.videoId) return null;
+  return {
+    videoId: raw.videoId,
+    position: Math.max(0, Math.round(safeNumber(raw.position, index))),
+    title: safeString(raw.title, 'Untitled lesson'),
+    description: safeString(raw.description),
+    durationSec: Math.max(0, Math.round(safeNumber(raw.durationSec))),
+    durationFormatted: safeString(raw.durationFormatted, '00:00'),
+    thumbnailUrl: safeString(raw.thumbnailUrl),
+    unavailable: raw.unavailable === true
+  };
+}
+
+function normalizeCourseProgress(raw: Record<string, unknown>): CourseProgress {
+  const now = new Date().toISOString();
+  const videos: Record<string, VideoProgress> = {};
+  if (isRecord(raw.videos)) {
+    for (const [videoId, value] of Object.entries(raw.videos)) {
+      if (!isRecord(value)) continue;
+      // Clamped to a sane ceiling here; `saveVideoPosition` tightens it further
+      // once the matching lesson duration is known.
+      videos[videoId] = {
+        completed: value.completed === true,
+        positionSec: clampSeconds(value.positionSec),
+        completedAt: typeof value.completedAt === 'string' ? value.completedAt : null
+      };
+    }
+  }
+  return {
+    lastVideoId: safeString(raw.lastVideoId),
+    updatedAt: safeTimestamp(raw.updatedAt, now),
+    completedAt: typeof raw.completedAt === 'string' ? raw.completedAt : null,
+    videos
+  };
+}
+
 export const storage = new StorageService();
+export type { CourseMetrics };

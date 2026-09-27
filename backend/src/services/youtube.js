@@ -3,8 +3,13 @@ import { SAMPLE_COURSES } from '../data/sampleCourses.js';
 
 const MAX_COURSE_VIDEOS = 200;
 const YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtube-nocookie.com', 'www.youtube-nocookie.com']);
+const SHORT_LINK_HOSTS = new Set(['youtu.be', 'www.youtu.be']);
+export const VIDEO_ID_PATTERN = /^[a-zA-Z0-9_-]{11}$/;
+const PLAYLIST_ID_PATTERN = /^[a-zA-Z0-9_-]{8,}$/;
+const RAW_PLAYLIST_ID_PATTERN = /^(?:PL|OL|UU|FL|RD|LL|LM)[a-zA-Z0-9_-]{6,}$/;
 const PLAYLIST_CACHE_TTL_MS = 10 * 60 * 1000;
 const PLAYLIST_CACHE_MAX_ENTRIES = 100;
+const VIDEO_DESC_CACHE_MAX_ENTRIES = 200;
 const playlistCache = new Map();
 const playlistRequests = new Map();
 
@@ -25,6 +30,14 @@ function cachePlaylistResponse(key, data) {
  */
 const videoDescCache = new Map();
 
+function cacheVideoDescription(videoId, desc) {
+  videoDescCache.delete(videoId);
+  videoDescCache.set(videoId, desc);
+  while (videoDescCache.size > VIDEO_DESC_CACHE_MAX_ENTRIES) {
+    videoDescCache.delete(videoDescCache.keys().next().value);
+  }
+}
+
 async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -43,79 +56,222 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
 export function parseFormattedDuration(str) {
   if (!str || typeof str !== 'string') return 0;
   const parts = str.trim().split(':').map(Number);
-  if (parts.some(isNaN)) return 0;
+  if (parts.length > 3 || parts.some(part => !Number.isFinite(part) || part < 0)) return 0;
   if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
   if (parts.length === 2) return parts[0] * 60 + parts[1];
   return parts[0] || 0;
 }
 
 /**
- * Extract YouTube playlist ID from any supported URL format or raw ID.
- * @param {string} input 
+ * Parse a user-supplied YouTube reference, but only when it resolves to an
+ * allow-listed YouTube host.
+ *
+ * The outbound request target is always rebuilt from an extracted id
+ * (`https://www.youtube.com/...`), so this is an input-validation boundary
+ * rather than a URL proxy: non-YouTube hosts never yield an id.
+ *
+ * @param {string} input
+ * @returns {URL|null}
+ */
+function parseYouTubeUrl(input) {
+  if (!input || typeof input !== 'string') return null;
+  const trimmed = input.trim();
+  if (!trimmed || /[\s<>"'\\]/.test(trimmed)) return null;
+  let urlObj;
+  try {
+    urlObj = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+  } catch {
+    return null;
+  }
+  if (urlObj.protocol !== 'https:' && urlObj.protocol !== 'http:') return null;
+  const hostname = urlObj.hostname.toLowerCase();
+  if (!YOUTUBE_HOSTS.has(hostname) && !SHORT_LINK_HOSTS.has(hostname)) return null;
+  return urlObj;
+}
+
+/**
+ * Extract YouTube playlist ID from an allow-listed URL, a raw playlist id, or a
+ * channel uploads URL. Returns null for anything else.
+ * @param {string} input
  * @returns {string|null}
  */
 export function extractPlaylistId(input) {
   if (!input || typeof input !== 'string') return null;
   const trimmed = input.trim();
+  if (!trimmed) return null;
 
-  // If already a playlist ID format (e.g. PL..., OLAK5uy_..., UU..., FL..., etc.)
-  if (/^[a-zA-Z0-9_-]{12,}$/.test(trimmed) && (trimmed.startsWith('PL') || trimmed.startsWith('OL') || trimmed.startsWith('UU') || trimmed.startsWith('FL') || trimmed.startsWith('RD'))) {
-    return trimmed;
-  }
+  // Bare ids: the sample catalogue plus the PL/OL/UU/FL/RD prefixes YouTube issues.
+  if (SAMPLE_COURSES[trimmed]) return trimmed;
+  if (RAW_PLAYLIST_ID_PATTERN.test(trimmed)) return trimmed;
 
-  try {
-    const urlObj = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`);
-    const hostname = urlObj.hostname.toLowerCase();
-    if (!YOUTUBE_HOSTS.has(hostname) && hostname !== 'youtu.be' && hostname !== 'www.youtu.be') return null;
-    const listParam = urlObj.searchParams.get('list');
-    if (listParam) return listParam;
-    const channelId = urlObj.pathname.match(/^\/channel\/(UC[a-zA-Z0-9_-]{22})(?:\/videos)?\/?$/);
-    if (YOUTUBE_HOSTS.has(hostname) && channelId) return `UU${channelId[1].slice(2)}`;
-  } catch (e) {
-    // Regex fallback
-    const listMatch = trimmed.match(/[?&]list=([a-zA-Z0-9_-]+)/);
-    if (listMatch) return listMatch[1];
-  }
+  const urlObj = parseYouTubeUrl(trimmed);
+  if (!urlObj) return null;
 
-  // Check sample IDs
-  if (SAMPLE_COURSES[trimmed]) {
-    return trimmed;
-  }
+  const listParam = urlObj.searchParams.get('list');
+  if (listParam && PLAYLIST_ID_PATTERN.test(listParam)) return listParam;
+
+  const channelId = urlObj.pathname.match(/^\/channel\/(UC[a-zA-Z0-9_-]{22})(?:\/videos)?\/?$/);
+  if (channelId) return `UU${channelId[1].slice(2)}`;
 
   return null;
 }
 
 /**
- * Extract single video ID if given a single video link (e.g. watch?v=XYZ or youtu.be/XYZ)
+ * Extract a single video id from an allow-listed URL or a bare 11-character id.
  * @param {string} input
  * @returns {string|null}
  */
 export function extractVideoId(input) {
   if (!input || typeof input !== 'string') return null;
   const trimmed = input.trim();
+  if (!trimmed) return null;
+  if (VIDEO_ID_PATTERN.test(trimmed)) return trimmed;
 
-  try {
-    const urlObj = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`);
-    const hostname = urlObj.hostname.toLowerCase();
-    if (hostname === 'youtu.be' || hostname === 'www.youtu.be') {
-      const vid = urlObj.pathname.replace(/^\//, '');
-      if (/^[a-zA-Z0-9_-]{11}$/.test(vid)) return vid;
+  const urlObj = parseYouTubeUrl(trimmed);
+  if (!urlObj) return null;
+
+  const hostname = urlObj.hostname.toLowerCase();
+  if (SHORT_LINK_HOSTS.has(hostname)) {
+    const shortId = urlObj.pathname.replace(/^\//, '').split('/')[0];
+    return VIDEO_ID_PATTERN.test(shortId) ? shortId : null;
+  }
+
+  const vParam = urlObj.searchParams.get('v');
+  if (vParam && VIDEO_ID_PATTERN.test(vParam)) return vParam;
+
+  const pathVideo = urlObj.pathname.match(/^\/(?:embed|shorts|live)\/([a-zA-Z0-9_-]{11})(?:\/|$)/);
+  return pathVideo ? pathVideo[1] : null;
+}
+
+/**
+ * Classify why YouTube refused to hand over metadata for a page.
+ *
+ * YouTube answers private / deleted / region-blocked playlists with HTTP 200 and
+ * an error page, so the reason has to be read out of the body. Each mode gets
+ * its own sentinel so the API layer can return an actionable message instead of
+ * one generic "not found".
+ *
+ * @param {string} html
+ * @returns {string} one of NOT_FOUND, PRIVATE, DELETED, REGION_BLOCKED, AGE_RESTRICTED, UNAVAILABLE
+ */
+function classifyYouTubePage(html) {
+  const text = typeof html === 'string' ? html.slice(0, 200000) : '';
+  if (!text) return 'NOT_FOUND';
+  if (/is private\b/i.test(text)) return 'PRIVATE';
+  if (/sign in to confirm your age|age[- ]restricted|inappropriate for some users/i.test(text)) return 'AGE_RESTRICTED';
+  if (/(?:not|un)[\w\s]{0,40}?available in your country|blocked it in your country|copyright grounds/i.test(text)) return 'REGION_BLOCKED';
+  if (/the playlist does not exist|has been removed|video unavailable|this video has been removed|account associated with this video has been terminated/i.test(text)) return 'DELETED';
+  if (/this content isn't available|content is not available/i.test(text)) return 'UNAVAILABLE';
+  return 'NOT_FOUND';
+}
+
+/**
+ * Read the real playlist size out of the header, e.g. "1,204 videos".
+ * Returns null when YouTube omits or reformats the string.
+ *
+ * @param {Record<string, unknown>|undefined} header playlistHeaderRenderer
+ * @returns {number|null}
+ */
+export function parseDeclaredItemCount(header) {
+  if (!header || typeof header !== 'object') return null;
+  const node = header.numVideosText;
+  if (!node || typeof node !== 'object') return null;
+  const parts = [];
+  if (typeof node.simpleText === 'string') parts.push(node.simpleText);
+  if (Array.isArray(node.runs)) {
+    for (const run of node.runs) {
+      if (typeof run?.text === 'string') parts.push(run.text);
     }
-    if (YOUTUBE_HOSTS.has(hostname)) {
-      const vParam = urlObj.searchParams.get('v');
-      if (vParam && /^[a-zA-Z0-9_-]{11}$/.test(vParam)) return vParam;
-      const pathVideo = urlObj.pathname.match(/^\/(?:embed|shorts|live)\/([a-zA-Z0-9_-]{11})(?:\/|$)/);
-      if (pathVideo) return pathVideo[1];
-    }
-    return null;
-  } catch (e) {}
+  }
+  const digits = parts.join('').replace(/[^\d]/g, '');
+  return digits ? Number.parseInt(digits, 10) : null;
+}
 
-  const match = trimmed.match(/(?:v=|youtu\.be\/|(?:embed|shorts|live)\/)([a-zA-Z0-9_-]{11})/);
-  if (match) return match[1];
+/**
+ * Every sentinel this module throws. Anything else is an unexpected bug and is
+ * reported to the client as a generic upstream failure.
+ */
+const UPSTREAM_SENTINELS = new Set([
+  'TIMEOUT', 'QUOTA_EXCEEDED', 'RATE_LIMITED', 'PRIVATE', 'DELETED',
+  'REGION_BLOCKED', 'AGE_RESTRICTED', 'UNAVAILABLE', 'NOT_FOUND',
+  'EMPTY_PLAYLIST', 'INVALID_URL', 'API_FAILURE'
+]);
 
-  if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
+/**
+ * Sentinels that say nothing more than "the request did not work". They lose to
+ * a specific reason when two upstream paths both fail.
+ */
+const GENERIC_SENTINELS = new Set(['API_FAILURE', 'NOT_FOUND', 'UNAVAILABLE']);
 
-  return null;
+/**
+ * Map the IFrame player response's playabilityStatus onto one of our sentinels.
+ * Returns null when the video is playable.
+ *
+ * @param {{status?: string, reason?: string}|undefined} playabilityStatus
+ * @returns {string|null}
+ */
+function classifyPlayabilityStatus(playabilityStatus) {
+  const status = playabilityStatus?.status;
+  if (!status || status === 'OK') return null;
+  if (status === 'LOGIN_REQUIRED' || status === 'AGE_VERIFICATION_REQUIRED') return 'AGE_RESTRICTED';
+  if (status === 'UNPLAYABLE' || status === 'LIVE_STREAM_OFFLINE') return 'UNAVAILABLE';
+  if (status === 'CONTENT_CHECK_REQUIRED') return 'UNAVAILABLE';
+  if (status === 'ERROR') {
+    const reason = String(playabilityStatus?.reason || '');
+    if (/private/i.test(reason)) return 'PRIVATE';
+    if (/removed|terminated/i.test(reason)) return 'DELETED';
+    if (/country|region/i.test(reason)) return 'REGION_BLOCKED';
+    return 'UNAVAILABLE';
+  }
+  return 'UNAVAILABLE';
+}
+
+/**
+ * Turn an upstream failure into a status/code/message triple.
+ *
+ * Only our own sentinel codes ever reach the client. Raw upstream error bodies
+ * are never forwarded, so a query-string `key=` can never leak to a caller.
+ *
+ * @param {unknown} err
+ * @returns {{status: number, error: string, message: string}}
+ */
+export function describeUpstreamError(err) {
+  const code = err && typeof err.message === 'string' ? err.message : '';
+
+  if (err?.name === 'AbortError' || code === 'TIMEOUT') {
+    return { status: 504, error: 'TIMEOUT', message: 'YouTube took too long to respond. Try again in a moment.' };
+  }
+  if (code === 'QUOTA_EXCEEDED') {
+    return { status: 429, error: 'QUOTA_EXCEEDED', message: "The YouTube API quota for today is used up. Try again tomorrow." };
+  }
+  if (code === 'RATE_LIMITED') {
+    return { status: 429, error: 'RATE_LIMITED', message: 'Too many playlist requests from this network. Wait a minute and try again.' };
+  }
+  if (code === 'PRIVATE') {
+    return { status: 404, error: 'PRIVATE', message: 'This playlist is private. Ask the owner to make it public or unlisted, then try again.' };
+  }
+  if (code === 'DELETED') {
+    return { status: 404, error: 'DELETED', message: 'This playlist or video no longer exists on YouTube. It may have been deleted by its owner.' };
+  }
+  if (code === 'REGION_BLOCKED') {
+    return { status: 451, error: 'REGION_BLOCKED', message: 'YouTube will not serve this content in your region, so Courseify cannot read it.' };
+  }
+  if (code === 'AGE_RESTRICTED') {
+    return { status: 403, error: 'AGE_RESTRICTED', message: 'This content is age-restricted and cannot be imported without a signed-in YouTube session.' };
+  }
+  if (code === 'UNAVAILABLE') {
+    return { status: 404, error: 'UNAVAILABLE', message: "YouTube would not serve this link. It may be private, deleted, or unavailable in your region." };
+  }
+  if (code === 'NOT_FOUND') {
+    return { status: 404, error: 'NOT_FOUND', message: "We couldn't find this playlist. Check the link and make sure the playlist is public or unlisted." };
+  }
+  if (code === 'EMPTY_PLAYLIST') {
+    return { status: 422, error: 'EMPTY_PLAYLIST', message: "This playlist has no playable videos. It may be empty, or every video in it is private." };
+  }
+  if (code === 'INVALID_URL') {
+    return { status: 400, error: 'INVALID_URL', message: 'Only youtube.com, youtu.be and youtube-nocookie.com links can be imported.' };
+  }
+  return { status: 502, error: 'API_FAILURE', message: "Couldn't reach YouTube. Check your connection and try again." };
 }
 
 /**
@@ -124,7 +280,7 @@ export function extractVideoId(input) {
  * @returns {Promise<string>}
  */
 export async function fetchVideoDescription(videoId) {
-  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return '';
+  if (!videoId || !VIDEO_ID_PATTERN.test(videoId)) return '';
   if (videoDescCache.has(videoId)) return videoDescCache.get(videoId);
 
   try {
@@ -162,10 +318,10 @@ export async function fetchVideoDescription(videoId) {
     }
 
     desc = (desc || '').substring(0, 4000);
-    videoDescCache.set(videoId, desc);
+    cacheVideoDescription(videoId, desc);
     return desc;
   } catch (err) {
-    console.warn(`Failed to fetch description for video ${videoId}:`, err.message);
+    console.warn(JSON.stringify({ event: 'description_fetch_failed', videoId, reason: err?.message || String(err) }));
     return '';
   }
 }
@@ -188,6 +344,13 @@ async function scrapeSingleVideo(videoId) {
   }
 
   const html = await response.text();
+
+  // YouTube serves an HTML error page with HTTP 200, so the body decides.
+  const pageMode = classifyYouTubePage(html);
+  if (pageMode !== 'NOT_FOUND') {
+    throw new Error(pageMode);
+  }
+
   const playerResponseMatch = html.match(/ytInitialPlayerResponse\s*=\s*({.+?});/s);
   const match = html.match(/ytInitialData\s*=\s*({.+?});<\/script>/s) || html.match(/var ytInitialData\s*=\s*({.+?});/);
   
@@ -233,12 +396,16 @@ async function scrapeSingleVideo(videoId) {
   if (playerResponseMatch) {
     try {
       const playerResponse = JSON.parse(playerResponseMatch[1]);
+      const playMode = classifyPlayabilityStatus(playerResponse.playabilityStatus);
+      if (playMode) throw new Error(playMode);
       const details = playerResponse.videoDetails;
       if (details?.title) title = details.title;
       if (details?.author) channelTitle = details.author;
       if (!description && details?.shortDescription) description = details.shortDescription;
       durationSec = Number.parseInt(details?.lengthSeconds || '0', 10) || 0;
-    } catch {}
+    } catch (err) {
+      if (err?.message && UPSTREAM_SENTINELS.has(err.message)) throw err;
+    }
   }
 
   // Fallback title regex
@@ -268,7 +435,9 @@ async function scrapeSingleVideo(videoId) {
     totalDurationFormatted: durationSec ? formatDurationHuman(durationSec) : 'Single Lesson',
     description: description.substring(0, 3000),
     addedAt: new Date().toISOString(),
-    lastOpenedAt: new Date().toISOString()
+    lastOpenedAt: new Date().toISOString(),
+    truncated: false,
+    totalItemCount: 1
   };
 
   return { course, videos: [video] };
@@ -299,17 +468,22 @@ async function fetchViaYouTubeAPI(playlistId, apiKey) {
   }
 
   const plSnippet = plData.items[0].snippet;
+  const declaredItemCount = Number.isFinite(plData.items[0].contentDetails?.itemCount)
+    ? plData.items[0].contentDetails.itemCount
+    : null;
   const course = {
     id: playlistId,
     title: plSnippet.title || 'Untitled Playlist',
     channelTitle: plSnippet.channelTitle || 'Unknown Channel',
     thumbnailUrl: plSnippet.thumbnails?.high?.url || plSnippet.thumbnails?.medium?.url || plSnippet.thumbnails?.default?.url || '',
-    videoCount: plData.items[0].contentDetails?.itemCount || 0,
+    videoCount: declaredItemCount || 0,
     totalDurationSec: 0,
     totalDurationFormatted: '0m',
     description: plSnippet.description || '',
     addedAt: new Date().toISOString(),
-    lastOpenedAt: new Date().toISOString()
+    lastOpenedAt: new Date().toISOString(),
+    truncated: false,
+    totalItemCount: declaredItemCount
   };
 
   // Step 2: playlistItems.list with pagination
@@ -398,6 +572,9 @@ async function fetchViaYouTubeAPI(playlistId, apiKey) {
   course.videoCount = videos.filter(video => !video.unavailable).length;
   course.totalDurationSec = totalDurationSec;
   course.totalDurationFormatted = formatDurationHuman(totalDurationSec);
+  // Surface the cap instead of silently handing back a short playlist (E6).
+  course.totalItemCount = declaredItemCount ?? videos.length;
+  course.truncated = course.totalItemCount > videos.length;
 
   return { course, videos };
 }
@@ -421,19 +598,23 @@ async function scrapeYouTubePlaylist(playlistId) {
 
   const html = await response.text();
 
+  // YouTube answers private / deleted / blocked playlists with HTTP 200 and an
+  // error page, so the reason has to come out of the body.
+  const pageMode = classifyYouTubePage(html);
+  if (pageMode !== 'NOT_FOUND') {
+    throw new Error(pageMode);
+  }
+
   // Look for ytInitialData
   const match = html.match(/ytInitialData\s*=\s*({.+?});<\/script>/s) || html.match(/var ytInitialData\s*=\s*({.+?});/);
   if (!match) {
-    if (html.includes('This playlist is private') || html.includes('The playlist does not exist')) {
-      throw new Error('NOT_FOUND');
-    }
     throw new Error('API_FAILURE');
   }
 
   let data;
   try {
     data = JSON.parse(match[1]);
-  } catch (e) {
+  } catch {
     throw new Error('API_FAILURE');
   }
 
@@ -473,7 +654,12 @@ async function scrapeYouTubePlaylist(playlistId) {
   if (rawItems.length === 0) {
     throw new Error('EMPTY_PLAYLIST');
   }
-  rawItems = rawItems.slice(0, MAX_COURSE_VIDEOS);
+
+  // YouTube only ships the first page of items, but the header states the real
+  // playlist size. Compare the two so a capped import is never silent.
+  const declaredItemCount = parseDeclaredItemCount(header);
+  const oversize = rawItems.length > MAX_COURSE_VIDEOS;
+  rawItems = oversize ? rawItems.slice(0, MAX_COURSE_VIDEOS) : rawItems;
 
   let totalDurationSec = 0;
   const videos = [];
@@ -557,7 +743,9 @@ async function scrapeYouTubePlaylist(playlistId) {
     totalDurationFormatted: formatDurationHuman(totalDurationSec),
     description: description.substring(0, 3000),
     addedAt: new Date().toISOString(),
-    lastOpenedAt: new Date().toISOString()
+    lastOpenedAt: new Date().toISOString(),
+    truncated: oversize || (declaredItemCount !== null && declaredItemCount > videos.length),
+    totalItemCount: declaredItemCount ?? videos.length
   };
 
   return { course, videos };
@@ -584,15 +772,20 @@ async function fetchPlaylistData(inputUrl) {
     try {
       return await fetchViaYouTubeAPI(playlistId, apiKey);
     } catch (err) {
-      if (err.message === 'QUOTA_EXCEEDED' || err.message === 'API_FAILURE') {
-        console.warn(JSON.stringify({ event: 'youtube_api_fallback', reason: err.message, playlistId }));
-        try {
-          return await scrapeYouTubePlaylist(playlistId);
-        } catch (scraperErr) {
-          throw err;
-        }
+      const reason = err?.message;
+      if (reason !== 'QUOTA_EXCEEDED' && reason !== 'API_FAILURE') throw err;
+
+      console.warn(JSON.stringify({ event: 'youtube_api_fallback', reason, playlistId }));
+      let scraperReason;
+      try {
+        return await scrapeYouTubePlaylist(playlistId);
+      } catch (scraperErr) {
+        scraperReason = scraperErr?.message;
       }
-      throw err;
+      // Both paths failed. Prefer whichever explanation is more specific: a
+      // private playlist is a 404, while a quota/transport error is a 429/502.
+      const winner = GENERIC_SENTINELS.has(scraperReason) ? reason : scraperReason;
+      throw new Error(winner || reason);
     }
   }
 

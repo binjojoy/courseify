@@ -41,7 +41,32 @@
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
   </head>
   <body class="bg-bg-canvas text-text-primary antialiased min-h-screen selection:bg-blue-600/20 selection:text-blue-600">
-    <div id="root"></div>
+    <div id="root">
+      <!--
+        Static shell rendered before the JS bundle parses. Without it the page
+        is a blank white rectangle for as long as the bundle takes to download,
+        parse and execute. main.tsx clears this node right before createRoot
+        mounts, so it never costs a repaint on a warm load.
+      -->
+      <div id="app-boot-shell" class="min-h-screen flex flex-col items-center justify-center gap-4 bg-bg-canvas text-text-primary">
+        <div class="w-9 h-9 rounded-xl bg-accent flex items-center justify-center text-white shadow-sm" aria-hidden="true">
+          <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><polygon points="6 4 20 12 6 20 6,4"></polygon></svg>
+        </div>
+        <p class="text-sm font-medium text-text-muted">Loading Courseify…</p>
+      </div>
+    </div>
+    <noscript>
+      <div class="min-h-screen flex items-center justify-center px-6 text-center bg-bg-canvas text-text-primary">
+        <div class="max-w-md">
+          <h1 class="text-xl font-bold mb-3">Courseify needs JavaScript</h1>
+          <p class="text-sm text-text-secondary leading-relaxed">
+            This app turns YouTube playlists into courses and stores your progress, notes
+            and favorites in your browser, so it runs entirely client-side. Enable
+            JavaScript for this page and reload to continue.
+          </p>
+        </div>
+      </div>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

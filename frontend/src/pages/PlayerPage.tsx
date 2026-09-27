@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Course, VideoItem, CourseProgress, CourseNotes, FavoriteVideo } from '../types';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Course, VideoItem, CourseProgress, CourseNotes, FavoriteVideo, NavigateFn } from '../types';
 import { storage } from '../services/storage';
 import { fetchVideoDescription } from '../services/api';
 import { getPlayableVideos } from '../utils/course';
+import { computeCourseMetrics, formatDurationHuman } from '../utils/progress';
 import { YouTubePlayer } from '../components/YouTubePlayer';
 import { PlaylistSidebar } from '../components/PlaylistSidebar';
 import { NotesSection } from '../components/NotesSection';
@@ -12,7 +13,7 @@ import { AISessionNotes } from '../components/AISessionNotes';
 interface PlayerPageProps {
   courseId: string;
   initialVideoId?: string;
-  onNavigate: (view: 'home' | 'dashboard' | 'player', courseId?: string) => void;
+  onNavigate: NavigateFn;
   onShowToast: (msg: string) => void;
 }
 
@@ -74,23 +75,32 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
   }, [initialVideoId, videos]);
 
   // Check and fetch description dynamically if missing
+  const descAttemptedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!currentVideoId) return;
     setIsFav(storage.isFavorite(currentVideoId));
 
     const current = videos.find(v => v.videoId === currentVideoId);
-    if (current && (!current.description || current.description.trim() === '')) {
-      const controller = new AbortController();
-      fetchVideoDescription(currentVideoId, controller.signal).then(desc => {
+    if (!current || (current.description && current.description.trim() !== '')) return;
+    // One attempt per lesson: the effect also re-runs on unrelated video list
+    // changes, and a silent failure would otherwise refetch on every render.
+    if (descAttemptedRef.current.has(currentVideoId)) return;
+    descAttemptedRef.current.add(currentVideoId);
+
+    const controller = new AbortController();
+    fetchVideoDescription(currentVideoId, controller.signal)
+      .then(desc => {
         if (!desc || controller.signal.aborted) return;
         setVideos(currentVideos => {
           const updated = currentVideos.map(video => video.videoId === currentVideoId ? { ...video, description: desc } : video);
           storage.saveCourseVideos(courseId, updated);
           return updated;
         });
-      }).catch(() => {});
-      return () => controller.abort();
-    }
+      })
+      // A missing description is not worth interrupting playback for; the panel
+      // already renders an explicit "no description available" state.
+      .catch(() => {});
+    return () => controller.abort();
   }, [currentVideoId, videos, courseId]);
 
   const currentVideo = videos.find(v => v.videoId === currentVideoId && !v.unavailable) || playableVideos[0];
@@ -151,16 +161,8 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
     window.dispatchEvent(new CustomEvent('courseify:seek-player', { detail: sec }));
   };
 
-  useEffect(() => {
-    const toggleFullscreen = () => {
-      const player = document.querySelector('.courseify-player') as HTMLElement | null;
-      if (!player) return;
-      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
-      else player.requestFullscreen?.().catch(() => {});
-    };
-    document.addEventListener('courseify:toggle-fullscreen', toggleFullscreen);
-    return () => document.removeEventListener('courseify:toggle-fullscreen', toggleFullscreen);
-  }, []);
+  // `courseify:toggle-fullscreen` (command palette) is handled by YouTubePlayer
+  // itself, so there is exactly one implementation to keep in step.
 
   const handleRewatch = () => {
     storage.resetCourseProgress(courseId);
@@ -243,13 +245,16 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
     });
   };
 
-  const metrics = storage.getCourseMetrics(courseId);
+  // Same shared computation the sidebar and dashboard use, fed from the state
+  // already in memory instead of re-reading localStorage on every render.
+  const metrics = useMemo(
+    () => computeCourseMetrics(videos, progress, course?.totalDurationSec),
+    [videos, progress, course?.totalDurationSec]
+  );
 
-  const formatDurationText = (sec: number) => {
-    const h = Math.floor(sec / 3600);
-    const m = Math.floor((sec % 3600) / 60);
-    return `${h}h ${m.toString().padStart(2, '0')}m`;
-  };
+  const totalDurationFormatted = formatDurationHuman(metrics.totalDurationSec);
+  const watchedDurationFormatted = formatDurationHuman(metrics.watchedDurationSec);
+  const sidebarTotalItemCount = course?.totalItemCount ?? course?.videoCount;
 
   if (!course) {
     return (
@@ -281,8 +286,14 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
           {/* Video Player Viewport Container with Margin & Spacing */}
           <div className="sticky top-0 z-40 w-full bg-bg-canvas lg:static">
           <div className="w-full bg-bg-canvas flex justify-center px-0 py-0 sm:px-4 lg:px-6 lg:py-6">
-            <section className="relative w-full max-w-[1280px] aspect-video bg-player-black select-none shrink-0 overflow-hidden">
-              <div className="relative w-full h-full overflow-hidden bg-black courseify-player">
+            {/* The video surface. Rounded and bordered like every other card in
+                the app so YouTube's own control bar sits on something that
+                belongs to Courseify rather than on a bare black rectangle. */}
+            <section
+              className="relative w-full max-w-[1280px] aspect-video bg-player-black shrink-0 overflow-hidden rounded-none sm:rounded-xl border-0 sm:border border-border-default shadow-none sm:shadow-sm"
+              data-testid="player-frame"
+            >
+              <div className="relative w-full h-full overflow-hidden bg-player-black courseify-player">
                 {currentVideo ? (
                   <YouTubePlayer
                     key={`${course.id}:${currentVideo.videoId}`}
@@ -292,7 +303,6 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
                     autoplayNext={autoplayNext}
                     autoCompleteThreshold={storage.getSettings().autoCompleteThreshold}
                     onNextVideo={handleNextVideo}
-                    onPrevVideo={handlePrevVideo}
                     onTimeUpdate={(cur) => setCurrentTimeSec(cur)}
                     onAutoComplete={handleAutoComplete}
                   />
@@ -518,8 +528,9 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
                     setAutoplayNext(nextVal);
                     storage.saveSettings({ ...storage.getSettings(), autoplayNext: nextVal });
                   }}
-                  totalDurationFormatted={formatDurationText(metrics.totalDurationSec)}
-                  watchedDurationFormatted={formatDurationText(metrics.watchedDurationSec)}
+                  totalDurationFormatted={totalDurationFormatted}
+                  watchedDurationFormatted={watchedDurationFormatted}
+                  totalItemCount={sidebarTotalItemCount}
                 />
               </div>
             </div>
@@ -541,8 +552,9 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({
               setAutoplayNext(nextVal);
               storage.saveSettings({ ...storage.getSettings(), autoplayNext: nextVal });
             }}
-            totalDurationFormatted={formatDurationText(metrics.totalDurationSec)}
-            watchedDurationFormatted={formatDurationText(metrics.watchedDurationSec)}
+            totalDurationFormatted={totalDurationFormatted}
+            watchedDurationFormatted={watchedDurationFormatted}
+            totalItemCount={sidebarTotalItemCount}
           />
         </div>
       </div>

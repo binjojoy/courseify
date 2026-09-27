@@ -1,6 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { VideoItem, CourseProgress, CourseNotes } from '../types';
 import { getPlayableVideos } from '../utils/course';
+import { clampPercent, computeCourseMetrics, pluralize } from '../utils/progress';
 
 interface PlaylistSidebarProps {
   videos: VideoItem[];
@@ -13,7 +14,20 @@ interface PlaylistSidebarProps {
   onToggleAutoplay: () => void;
   totalDurationFormatted: string;
   watchedDurationFormatted: string;
+  /**
+   * Set when the source playlist is larger than the lessons stored locally, so
+   * the list can say so instead of implying this is the whole course.
+   */
+  totalItemCount?: number;
 }
+
+/**
+ * Past this length the browser spends real time laying out and hit-testing every
+ * row. `content-visibility: auto` lets it skip off-screen rows while keeping
+ * them in the DOM and in the accessibility tree, so the existing Playwright
+ * visibility assertions and the arrow-key navigation keep working.
+ */
+const VIRTUALIZATION_THRESHOLD = 60;
 
 export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
   videos,
@@ -25,7 +39,8 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
   onToggleComplete,
   onToggleAutoplay,
   totalDurationFormatted,
-  watchedDurationFormatted
+  watchedDurationFormatted,
+  totalItemCount
 }) => {
   const [hideCompleted, setHideCompleted] = useState(false);
   const [showJumpPill, setShowJumpPill] = useState(false);
@@ -33,11 +48,17 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
   const listContainerRef = useRef<HTMLDivElement>(null);
   const currentItemRef = useRef<HTMLDivElement>(null);
 
-  const playableVideos = getPlayableVideos(videos);
-  const completedCount = playableVideos.filter(v => progress.videos[v.videoId]?.completed).length;
-  const totalCount = playableVideos.length;
-  const percent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
-  const isAllCompleted = totalCount > 0 && completedCount === totalCount;
+  // One computation shared with the dashboard and the player, instead of a
+  // third copy of the completion formula living in this component.
+  const { completedVideos, totalVideos, completionPercent } = useMemo(
+    () => computeCourseMetrics(videos, progress),
+    [videos, progress]
+  );
+  const isAllCompleted = totalVideos > 0 && completedVideos === totalVideos;
+  const percent = clampPercent(completionPercent);
+  const unavailableCount = videos.length - getPlayableVideos(videos).length;
+  const shouldVirtualize = videos.length > VIRTUALIZATION_THRESHOLD;
+  const isTruncated = typeof totalItemCount === 'number' && totalItemCount > videos.length;
 
   // Auto-scroll current item into view on change
   useEffect(() => {
@@ -91,7 +112,7 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
               <span className="material-symbols-outlined text-[16px] text-success">check_circle</span>
             )}
             <span className="text-sm font-bold text-text-primary tabular-nums">
-              <span data-testid="progress-indicator">{completedCount} / {totalCount}</span>
+              <span data-testid="progress-indicator">{completedVideos} / {totalVideos}</span>
             </span>
             <span className="text-xs text-text-muted font-mono">({percent}%)</span>
           </div>
@@ -105,12 +126,36 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
         </div>
 
         {/* Progress Bar */}
-        <div role="progressbar" aria-label="Course completion" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={`${completedCount} of ${totalCount} lessons completed`} className="w-full h-1.5 bg-border-default dark:bg-[#1E293B] rounded-full overflow-hidden">
+        <div role="progressbar" aria-label="Course completion" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={`${completedVideos} of ${totalVideos} lessons completed`} className="w-full h-1.5 bg-border-default dark:bg-[#1E293B] rounded-full overflow-hidden">
           <div
             className={`h-full rounded-full transition-all duration-300 ${isAllCompleted ? 'bg-success' : 'bg-accent'}`}
             style={{ width: `${percent}%` }}
           ></div>
         </div>
+
+        {/* Say out loud when the playlist was capped, and how many lessons the
+            player refused, rather than showing a quietly short list. */}
+        {isTruncated && (
+          <p
+            data-testid="playlist-truncated-notice"
+            className="text-xs text-text-muted bg-bg-elevated border border-border-default rounded-lg px-2.5 py-2 leading-relaxed"
+          >
+            <span className="material-symbols-outlined text-[14px] align-text-bottom mr-1">info</span>
+            This playlist lists {pluralize(totalItemCount!, 'lesson')}, but Courseify imported the
+            first {videos.length}. Open it on YouTube for the rest.
+          </p>
+        )}
+
+        {unavailableCount > 0 && (
+          <p
+            data-testid="playlist-unavailable-notice"
+            className="text-xs text-text-muted bg-bg-elevated border border-border-default rounded-lg px-2.5 py-2 leading-relaxed"
+          >
+            <span className="material-symbols-outlined text-[14px] align-text-bottom mr-1">block</span>
+            {pluralize(unavailableCount, 'lesson')} can&apos;t be played (private, deleted, or
+            embedding disabled) and don&apos;t count towards progress.
+          </p>
+        )}
 
         {/* Playlist Utility Controls */}
         <div className="flex items-center justify-between pt-1">
@@ -155,16 +200,21 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
           const isCurrent = video.videoId === currentVideoId;
           const isCompleted = !video.unavailable && !!progress.videos[video.videoId]?.completed;
           const hasNote = !!notes[video.videoId]?.text;
+          const isUnavailable = !!video.unavailable;
 
           return (
             <div
               key={video.videoId}
               data-testid="lesson-item"
+              data-unavailable={isUnavailable ? 'true' : undefined}
               aria-current={isCurrent ? 'true' : undefined}
               role="group"
-              aria-label={video.title}
+              aria-label={isUnavailable ? `${video.title} (unavailable)` : video.title}
               id={`playlist-item-${idx}`}
               ref={isCurrent ? currentItemRef : undefined}
+              style={shouldVirtualize
+                ? { contentVisibility: 'auto', containIntrinsicSize: 'auto 60px' }
+                : undefined}
               className={`min-h-[3.75rem] py-2.5 px-3 rounded-lg flex items-center justify-between transition-colors group ${
                 isCurrent
                   ? 'bg-accent-subtle/80 dark:bg-[#1E293B]/90 border-l-4 border-accent shadow-sm'
@@ -174,8 +224,13 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
               {/* Left Column: Index or Playing Indicator */}
               <button
                 type="button"
-                disabled={video.unavailable}
-                aria-label={`${isCurrent ? 'Currently playing' : 'Play'} lesson ${video.position + 1}: ${video.title}`}
+                disabled={isUnavailable}
+                aria-label={isUnavailable
+                  ? `Unavailable: lesson ${video.position + 1}, ${video.title}`
+                  : `${isCurrent ? 'Currently playing' : 'Play'} lesson ${video.position + 1}: ${video.title}`}
+                title={isUnavailable
+                  ? 'This lesson can\'t be played here: it is private, deleted, or the owner disabled embedding.'
+                  : undefined}
                 onClick={() => onSelectVideo(video.videoId)}
                 onKeyDown={(event) => {
                   if (event.key === 'ArrowDown' && idx < filteredVideos.length - 1) {
@@ -189,7 +244,14 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
                 id={`playlist-item-${idx}-play`}
                 className="flex flex-1 min-w-0 items-center gap-3 pl-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {isCurrent ? (
+                {isUnavailable ? (
+                  <span
+                    className="material-symbols-outlined text-[16px] text-text-muted w-5 shrink-0 flex justify-center"
+                    aria-hidden="true"
+                  >
+                    block
+                  </span>
+                ) : isCurrent ? (
                   <div className="w-5 flex items-end justify-center gap-0.5 h-3.5 shrink-0" title="Currently Playing">
                     <span className="w-[2.5px] h-3.5 bg-accent rounded-full animate-pulse"></span>
                     <span className="w-[2.5px] h-2 bg-accent rounded-full animate-pulse" style={{ animationDelay: '150ms' }}></span>
@@ -205,7 +267,9 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
                 <div className="flex items-center gap-1.5 min-w-0">
                   <span
                     className={`text-sm line-clamp-2 leading-snug transition-colors ${
-                      isCurrent
+                      isUnavailable
+                        ? 'text-text-muted line-through'
+                        : isCurrent
                         ? 'font-semibold text-text-primary dark:text-white'
                         : isCompleted
                         ? 'text-text-secondary font-normal'
@@ -214,6 +278,12 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
                   >
                     {video.title}
                   </span>
+
+                  {isUnavailable && (
+                    <span className="text-[10px] uppercase tracking-wide text-text-muted border border-border-default rounded px-1 py-px shrink-0">
+                      Unavailable
+                    </span>
+                  )}
 
                   {hasNote && (
                     <span
@@ -229,7 +299,7 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
               {/* Right Column: Duration & Checkbox */}
               <div className="flex items-center gap-3 shrink-0 ml-2">
                 <span className="font-mono text-xs text-text-muted tabular-nums">
-                  {video.durationFormatted}
+                  {isUnavailable ? '--:--' : video.durationFormatted}
                 </span>
 
                 {/* Interactive Checkbox */}
@@ -238,7 +308,7 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
                   role="checkbox"
                   aria-label={`${isCompleted ? 'Mark incomplete' : 'Mark complete'}: ${video.title}`}
                   aria-checked={isCompleted}
-                  disabled={video.unavailable}
+                  disabled={isUnavailable}
                   onClick={(e) => {
                     e.stopPropagation();
                     onToggleComplete(video.videoId);
@@ -260,8 +330,10 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
         })}
 
         {filteredVideos.length === 0 && (
-          <div className="p-8 text-center text-text-muted text-sm">
-            All completed videos are hidden.
+          <div className="p-8 text-center text-text-muted text-sm" role="status">
+            {videos.length === 0
+              ? 'This course has no lessons to show.'
+              : 'All completed videos are hidden.'}
           </div>
         )}
       </div>

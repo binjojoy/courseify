@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 interface NamePromptModalProps {
   isOpen: boolean;
@@ -14,6 +15,21 @@ export const NamePromptModal: React.FC<NamePromptModalProps> = ({
   onSkip
 }) => {
   const [name, setName] = useState(initialName);
+  const dialogRef = useFocusTrap<HTMLDivElement>(isOpen);
+
+  // Reopen on the current saved name rather than whatever was last typed.
+  useEffect(() => {
+    if (isOpen) setName(initialName);
+  }, [isOpen, initialName]);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onSkip?.();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, onSkip]);
 
   if (!isOpen) return null;
 
@@ -27,22 +43,36 @@ export const NamePromptModal: React.FC<NamePromptModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-scrim/80 backdrop-blur-xs animate-fadeIn">
-      <div className="w-full max-w-[400px] bg-bg-elevated rounded-2xl border border-border-default shadow-2xl p-6 flex flex-col">
-        <h3 className="font-heading text-heading text-text-primary mb-1">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-scrim/80 backdrop-blur-xs animate-fadeIn"
+      onMouseDown={event => { if (event.target === event.currentTarget) onSkip?.(); }}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="name-prompt-title"
+        aria-describedby="name-prompt-description"
+        tabIndex={-1}
+        className="w-full max-w-[400px] bg-bg-elevated rounded-2xl border border-border-default shadow-2xl p-6 flex flex-col focus:outline-none"
+      >
+        <h3 id="name-prompt-title" className="font-heading text-heading text-text-primary mb-1">
           What should we call you?
         </h3>
-        <p className="font-body-sm text-body-sm text-text-muted mb-4">
+        <p id="name-prompt-description" className="font-body-sm text-body-sm text-text-muted mb-4">
           Your name is stored locally in this browser.
         </p>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <input
+            id="profile-name-input"
             type="text"
-            autoFocus
             value={name}
+            maxLength={60}
+            autoFocus
             onChange={(e) => setName(e.target.value)}
             placeholder="Enter your name"
+            aria-label="Your name"
             className="w-full h-10 px-3 bg-bg-surface border border-border-default rounded-lg text-text-primary focus:outline-none focus:border-accent text-sm"
           />
 

@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { storage } from '../services/storage';
 import { UserProfile, AppSettings } from '../types';
-import { ConfirmDialog } from './ConfirmDialog';
+import { ImportConflictDialog } from './ImportConflictDialog';
+import { BackupValidationError, MAX_BACKUP_BYTES, type ImportAnalysis, type ImportStrategy } from '../services/backup';
 import { KeyRound, Search, Sparkles } from 'lucide-react';
 import { GeminiUsage, getGeminiApiKey, getGeminiUsage } from '../services/ai';
 
@@ -37,6 +38,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [isAvatarOpen, setIsAvatarOpen] = useState(false);
   const [isCourseMenuOpen, setIsCourseMenuOpen] = useState(false);
   const [pendingImport, setPendingImport] = useState<string | null>(null);
+  const [importAnalysis, setImportAnalysis] = useState<ImportAnalysis | null>(null);
+  const [importExportedAt, setImportExportedAt] = useState<string | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
   const [hasGeminiKey, setHasGeminiKey] = useState(() => !!getGeminiApiKey());
   const [geminiUsage, setGeminiUsage] = useState<GeminiUsage>(() => getGeminiUsage());
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -91,29 +96,90 @@ export const Navbar: React.FC<NavbarProps> = ({
   };
 
   const handleExportBackup = () => {
-    const json = storage.exportBackup();
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `courseify-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    setIsAvatarOpen(false);
-    onShowToast('Backup exported successfully.');
+    try {
+      const backup = storage.exportBackup();
+      const json = JSON.stringify(backup, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      // The export timestamp is in both the filename and the payload, so the
+      // user can tell two downloads apart in their Downloads folder.
+      a.href = url;
+      a.download = `courseify-backup-${backup.exportedAt.slice(0, 19).replace(/[:T]/g, '-')}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // Revoke on the next tick: revoking synchronously can cancel the download
+      // in some browsers before it starts reading the blob.
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      // The file exists now, so the dashboard can stop nagging about a backup.
+      storage.recordBackupExport();
+      setIsAvatarOpen(false);
+      onShowToast('Backup exported successfully.');
+    } catch {
+      onShowToast('Could not export your backup. Check available browser storage and try again.');
+    }
+  };
+
+  const resetImportState = () => {
+    setPendingImport(null);
+    setImportAnalysis(null);
+    setImportExportedAt(null);
+    setImportError(null);
+    setIsImporting(false);
   };
 
   const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const content = evt.target?.result as string;
-      setPendingImport(content);
-    };
-    reader.readAsText(file);
     setIsAvatarOpen(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
+    if (!file) return;
+
+    // Reject on size before reading: a 500MB file would otherwise be loaded
+    // into memory as a string and blow past the localStorage quota anyway.
+    if (file.size > MAX_BACKUP_BYTES) {
+      onShowToast(`That file is ${(file.size / 1024 / 1024).toFixed(1)} MB. Backups must be 10 MB or smaller.`);
+      return;
+    }
+
+    setImportError(null);
+    const reader = new FileReader();
+    reader.onerror = () => {
+      setImportError('That file could not be read. Check you have permission to open it, then try again.');
+    };
+    reader.onload = (evt) => {
+      const content = typeof evt.target?.result === 'string' ? evt.target.result : '';
+      try {
+        // Validate first, so nothing is written until the user has chosen a
+        // strategy and the file is known to be a real backup.
+        const { backup, analysis } = storage.inspectBackup(content);
+        setPendingImport(content);
+        setImportAnalysis(analysis);
+        setImportExportedAt(backup.exportedAt);
+      } catch (err) {
+        setImportError(err instanceof BackupValidationError
+          ? err.message
+          : "That file isn't a readable Courseify backup. Pick the .json file exported from the backup menu.");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const confirmImport = (strategy: ImportStrategy) => {
+    if (!pendingImport) return;
+    setIsImporting(true);
+    try {
+      const analysis = storage.importBackup(pendingImport, strategy);
+      resetImportState();
+      onShowToast(strategy === 'merge'
+        ? `Backup merged: ${analysis.summary}.`
+        : 'Backup imported successfully.');
+    } catch (err) {
+      setIsImporting(false);
+      setImportError(err instanceof BackupValidationError
+        ? err.message
+        : "That backup could not be imported. Nothing was changed - check available browser storage and try again.");
+    }
   };
 
   const displayName = profile.name || 'User';
@@ -361,25 +427,40 @@ export const Navbar: React.FC<NavbarProps> = ({
             ref={fileInputRef}
             type="file"
             accept=".json,application/json"
+            aria-label="Import backup file"
             className="hidden"
             onChange={handleImportFile}
           />
         </nav>
       </div>
     </header>
-    <ConfirmDialog
-      isOpen={!!pendingImport}
-      title="Replace local Courseify data?"
-      body="Importing this backup replaces your current courses, progress, notes, favorites, settings, and analytics in this browser."
-      confirmLabel="Replace data"
-      isDestructive
-      onCancel={() => setPendingImport(null)}
-      onConfirm={() => {
-        const success = pendingImport ? storage.importBackup(pendingImport) : false;
-        setPendingImport(null);
-        onShowToast(success ? 'Backup imported successfully.' : 'Failed to import backup: invalid file format.');
-      }}
-    />
+    {importError && (
+      <div
+        role="alert"
+        className="fixed top-16 left-1/2 -translate-x-1/2 z-[60] w-[min(560px,calc(100%-2rem))] flex items-start gap-3 rounded-xl border border-error/40 bg-bg-elevated px-4 py-3 shadow-xl animate-fadeIn"
+      >
+        <span className="material-symbols-outlined text-[20px] text-error shrink-0 mt-px">error</span>
+        <p className="text-sm text-text-primary leading-relaxed flex-1">{importError}</p>
+        <button
+          type="button"
+          onClick={() => setImportError(null)}
+          aria-label="Dismiss import error"
+          className="shrink-0 text-text-muted hover:text-text-primary transition-colors"
+        >
+          <span className="material-symbols-outlined text-[18px]">close</span>
+        </button>
+      </div>
+    )}
+    {importAnalysis && (
+      <ImportConflictDialog
+        isOpen
+        analysis={importAnalysis}
+        exportedAt={importExportedAt}
+        isImporting={isImporting}
+        onCancel={resetImportState}
+        onConfirm={confirmImport}
+      />
+    )}
     </>
   );
 };

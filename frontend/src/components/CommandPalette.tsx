@@ -10,6 +10,8 @@ interface CommandPaletteProps {
   onNavigate: (courseId: string, videoId?: string) => void;
   onOpenGeminiSettings: () => void;
   onToggleTheme: () => void;
+  currentView: string;
+  onShowToast: (message: string) => void;
 }
 
 interface PaletteCommand {
@@ -21,7 +23,7 @@ interface PaletteCommand {
   action: () => void;
 }
 
-export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose, courses, onNavigate, onOpenGeminiSettings, onToggleTheme }) => {
+export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose, courses, onNavigate, onOpenGeminiSettings, onToggleTheme, currentView, onShowToast }) => {
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
 
@@ -48,12 +50,16 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
   }, []);
 
   const commands = useMemo<PaletteCommand[]>(() => {
+    // Building the index reads every lesson list and every note out of
+    // localStorage, so it only happens while the palette is actually open.
+    if (!isOpen) return [];
     const theme = storage.getSettings().theme;
+    const inPlayer = currentView === 'player';
     const items: PaletteCommand[] = [
-      { id: 'generate', label: 'Generate AI study guide', detail: 'Current lesson', icon: <Sparkles size={17} />, action: () => window.dispatchEvent(new Event('courseify:generate-ai-notes')) },
+      { id: 'generate', label: 'Generate AI study guide', detail: inPlayer ? 'Current lesson' : 'Open a course first', icon: <Sparkles size={17} />, action: () => inPlayer ? window.dispatchEvent(new Event('courseify:generate-ai-notes')) : onShowToast('AI study guides are available after you open a course lesson.') },
       { id: 'key', label: 'Configure Gemini API key', detail: 'AI settings', icon: <KeyRound size={17} />, action: onOpenGeminiSettings },
       { id: 'theme', label: `Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`, detail: 'Appearance', icon: theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />, action: onToggleTheme },
-      { id: 'fullscreen', label: 'Toggle fullscreen', detail: 'Current lesson', icon: <Maximize size={17} />, action: () => document.dispatchEvent(new Event('courseify:toggle-fullscreen')) }
+      { id: 'fullscreen', label: 'Toggle fullscreen', detail: inPlayer ? 'Current lesson' : 'Open a lesson first', icon: <Maximize size={17} />, action: () => inPlayer ? document.dispatchEvent(new Event('courseify:toggle-fullscreen')) : onShowToast('Fullscreen is available while watching a lesson.') }
     ];
     courses.forEach(course => {
       storage.getCourseVideos(course.id).forEach(video => {
@@ -77,7 +83,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
       });
     });
     return items;
-  }, [courses, onNavigate, onOpenGeminiSettings, onToggleTheme]);
+  }, [isOpen, courses, currentView, onNavigate, onOpenGeminiSettings, onShowToast, onToggleTheme]);
 
   const filtered = commands.filter(command => `${command.label} ${command.detail} ${command.searchText || ''}`.toLowerCase().includes(query.toLowerCase()));
 

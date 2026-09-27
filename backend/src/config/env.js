@@ -1,5 +1,27 @@
 const DEFAULT_FRONTEND_URLS = ['https://youtubecourseify.vercel.app', 'http://localhost:5173'];
 
+/**
+ * Exact-match CORS decision for a browser `Origin` header.
+ *
+ * There is deliberately no wildcard/suffix matching (for example `*.vercel.app`):
+ * any third party could otherwise deploy a static site on a matching domain and
+ * call this API from their page, burning the YouTube quota attached to this
+ * service. Requests without an `Origin` header (curl, Postman, health probes)
+ * are allowed through and are constrained by rate limiting instead.
+ *
+ * @param {string|null|undefined} origin
+ * @param {Iterable<string>} allowedOrigins
+ * @returns {boolean}
+ */
+export function isAllowedOrigin(origin, allowedOrigins) {
+  if (!origin) return true;
+  const normalized = origin.replace(/\/$/, '');
+  for (const allowed of allowedOrigins) {
+    if (allowed.replace(/\/$/, '') === normalized) return true;
+  }
+  return false;
+}
+
 export function loadBackendConfig(env = process.env, logger = console) {
   const port = Number(env.PORT || 5000);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -26,6 +48,15 @@ export function loadBackendConfig(env = process.env, logger = console) {
   }
   if (!youtubeApiKey) {
     logger.info(JSON.stringify({ event: 'youtube_api_key_missing', action: 'public_scraper_fallback' }));
+  }
+
+  // A `VITE_`-prefixed variable is inlined into the client bundle by Vite, which
+  // would publish the key to every visitor. Never read one, but warn loudly so
+  // a mis-configured deployment is obvious instead of silently leaking.
+  for (const name of Object.keys(env)) {
+    if (/^VITE_.*(YOUTUBE|GEMINI|GOOGLE).*KEY$/i.test(name)) {
+      logger.warn(JSON.stringify({ event: 'client_exposed_secret_variable', variable: name, action: 'ignored' }));
+    }
   }
 
   return { port, frontendUrls, youtubeApiKey };

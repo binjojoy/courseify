@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { storage } from './services/storage';
-import { Course } from './types';
+import { Course, ViewMode } from './types';
 import { Navbar } from './components/Navbar';
 import { HomePage } from './pages/HomePage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -17,8 +17,9 @@ import { NotFoundPage } from './pages/NotFoundPage';
 import { AuditPage } from './pages/AuditPage';
 import { GeminiKeyModal } from './components/GeminiKeyModal';
 import { CommandPalette } from './components/CommandPalette';
-
-type ViewMode = 'home' | 'dashboard' | 'player' | 'privacy' | 'terms' | 'notfound' | 'audit';
+import { LoadingScreen } from './components/LoadingScreen';
+import { ReleaseNotesModal } from './components/ReleaseNotesModal';
+import { APP_VERSION, RELEASE_NOTICE_KEY } from './config/app';
 
 export const App: React.FC = () => {
   // Route selection is resolved after persisted courses are available.
@@ -35,6 +36,8 @@ export const App: React.FC = () => {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastUndoAction, setToastUndoAction] = useState<{ label: string; onUndo: () => void; durationMs?: number } | null>(null);
+  const [isBooting, setIsBooting] = useState(true);
+  const [isReleaseNotesOpen, setIsReleaseNotesOpen] = useState(false);
 
   // Parse location hash on load and hashchange
   const parseRoute = () => {
@@ -100,14 +103,43 @@ export const App: React.FC = () => {
       document.documentElement.classList.remove('dark');
     }
 
-    parseRoute();
+    const bootTimer = window.setTimeout(() => {
+      parseRoute();
+      setIsBooting(false);
+      setIsReleaseNotesOpen(localStorage.getItem(RELEASE_NOTICE_KEY) !== APP_VERSION);
+    }, 260);
     window.addEventListener('hashchange', parseRoute);
     const openGeminiSettings = () => setIsGeminiKeyModalOpen(true);
     window.addEventListener('courseify:open-gemini-settings', openGeminiSettings);
     return () => {
       window.removeEventListener('hashchange', parseRoute);
       window.removeEventListener('courseify:open-gemini-settings', openGeminiSettings);
+      window.clearTimeout(bootTimer);
     };
+  }, []);
+
+  useEffect(() => {
+    const handleCommandShortcut = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'k' || target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+      event.preventDefault();
+      setIsCommandPaletteOpen(true);
+    };
+    window.addEventListener('keydown', handleCommandShortcut);
+    return () => window.removeEventListener('keydown', handleCommandShortcut);
+  }, []);
+
+  // Storage refuses (usually a full quota). A note or a progress write that
+  // silently vanished is worse than a noisy message, so surface it once.
+  useEffect(() => {
+    const handleStorageError = (event: Event) => {
+      const detail = (event as CustomEvent<{ message?: string }>).detail;
+      setToastUndoAction(null);
+      setToastMessage(detail?.message || 'A change could not be saved in this browser.');
+      window.setTimeout(() => setToastMessage(null), 6000);
+    };
+    window.addEventListener('courseify:storage-error', handleStorageError);
+    return () => window.removeEventListener('courseify:storage-error', handleStorageError);
   }, []);
 
   const navigateTo = (view: ViewMode, courseId?: string, videoId?: string) => {
@@ -136,21 +168,31 @@ export const App: React.FC = () => {
       const refreshed = await fetchPlaylist(activeCourse.source.url);
       const oldVideos = storage.getCourseVideos(activeCourse.id);
       const refreshedIds = new Set(refreshed.videos.map(video => video.videoId));
+      // Lessons the source dropped are kept and flagged, so existing progress
+      // and notes for them are not silently destroyed.
       const removed = oldVideos
         .filter(video => !refreshedIds.has(video.videoId))
         .map(video => ({ ...video, unavailable: true }));
-      storage.addOrUpdateCourse({
+      const saved = storage.addCourseWithVideos({
         ...refreshed.course,
         id: activeCourse.id,
         videoCount: getPlayableVideos(refreshed.videos).length,
         addedAt: activeCourse.addedAt,
         lastOpenedAt: new Date().toISOString(),
         source: activeCourse.source
-      });
-      storage.saveCourseVideos(activeCourse.id, [...refreshed.videos, ...removed]);
-      showToast('Playlist refreshed successfully.');
-    } catch (error: any) {
-      showToast(error?.message || 'Could not refresh this playlist.');
+      }, [...refreshed.videos, ...removed]);
+      if (!saved) {
+        showToast('Could not save the refreshed playlist - this browser is out of storage space.');
+        return;
+      }
+      const newCount = removed.length;
+      showToast(newCount > 0
+        ? `Playlist refreshed. ${newCount} lesson${newCount === 1 ? '' : 's'} no longer available.`
+        : 'Playlist refreshed successfully.');
+    } catch (error: unknown) {
+      showToast(error instanceof Error && error.message
+        ? error.message
+        : 'Could not refresh this playlist.');
     }
   };
 
@@ -225,6 +267,13 @@ export const App: React.FC = () => {
     storage.saveSettings({ ...settings, theme });
     document.documentElement.classList.toggle('dark', theme === 'dark');
   };
+
+  const dismissReleaseNotes = () => {
+    localStorage.setItem(RELEASE_NOTICE_KEY, APP_VERSION);
+    setIsReleaseNotesOpen(false);
+  };
+
+  if (isBooting) return <LoadingScreen />;
 
   return (
     <div className="min-h-screen flex flex-col bg-bg-canvas text-text-primary">
@@ -360,8 +409,11 @@ export const App: React.FC = () => {
         onNavigate={(courseId, videoId) => navigateTo('player', courseId, videoId)}
         onOpenGeminiSettings={() => setIsGeminiKeyModalOpen(true)}
         onToggleTheme={toggleTheme}
+        currentView={currentView}
+        onShowToast={showToast}
       />
       <CommandPaletteOpener onOpen={() => setIsCommandPaletteOpen(true)} />
+      <ReleaseNotesModal isOpen={isReleaseNotesOpen} onClose={dismissReleaseNotes} />
     </div>
   );
 };

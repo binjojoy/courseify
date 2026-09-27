@@ -28,7 +28,11 @@ export default {
         "error-subtle": "var(--error-subtle, #FBE9E7)",
         "warning": "var(--warning, #9A6100)",
         "warning-subtle": "var(--warning-subtle, #FBF0DA)",
-        "player-black": "#030712",
+        // Space-separated channels so the `/70` and `/20` modifiers in
+        // ContinueLearningBanner keep working. A plain hex here would also pin
+        // every `bg-player-black` surface to the dark palette, because the
+        // light theme's `--player-black` would never be consulted.
+        "player-black": "rgb(var(--player-black, 3 7 18) / <alpha-value>)",
         "scrim": "var(--scrim, rgba(15,18,25,0.50))",
 
         // Aliases from reference HTMLs

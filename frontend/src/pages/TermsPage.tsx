@@ -17,13 +17,13 @@ export const TermsPage: React.FC<TermsPageProps> = ({ onBack }) => {
         </button>
 
         <h1 className="text-3xl font-bold tracking-tight mb-2">Terms of Service</h1>
-        <p className="text-xs text-text-muted mb-8">Effective Date: September 24, 2026</p>
+        <p className="text-xs text-text-muted mb-8">Effective Date: September 27, 2026</p>
 
         <div className="space-y-6 text-sm text-text-secondary leading-relaxed bg-bg-surface p-6 sm:p-8 rounded-2xl border border-border-default shadow-xs">
           <section>
             <h2 className="text-base font-bold text-text-primary mb-2">1. Use of Service</h2>
             <p>
-              Courseify is an educational tool designed to help learners organize YouTube video playlists and lessons into structured, distraction-free study spaces. You agree to use Courseify in compliance with applicable laws and YouTube's Terms of Service.
+              Courseify is an educational tool designed to help learners organize YouTube playlists and lessons into structured study spaces. You agree to use Courseify in compliance with applicable laws, YouTube's Terms of Service, and the terms that apply to any third-party AI service you connect.
             </p>
           </section>
 
@@ -35,7 +35,21 @@ export const TermsPage: React.FC<TermsPageProps> = ({ onBack }) => {
           </section>
 
           <section>
-            <h2 className="text-base font-bold text-text-primary mb-2">3. Disclaimer of Warranties</h2>
+            <h2 className="text-base font-bold text-text-primary mb-2">3. Optional Gemini Features</h2>
+            <p>
+              AI study guides, Markdown notes, timestamp highlights, quizzes, and flashcards are optional features powered by the Gemini API when you provide your own key. You are responsible for obtaining the key lawfully, protecting it, reviewing generated content, and complying with Google's AI Studio and Gemini terms. Do not submit confidential or sensitive information in lesson descriptions or notes.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-base font-bold text-text-primary mb-2">4. Generated Content</h2>
+            <p>
+              AI-generated summaries and study materials may be incomplete, inaccurate, or unsuitable for a particular purpose. They are learning aids, not authoritative instruction. Verify important claims against the original lesson and use clickable timestamps only as navigation aids.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-base font-bold text-text-primary mb-2">5. Disclaimer of Warranties</h2>
             <p>
               Courseify is provided "as is" without warranty of any kind. Availability of video streaming depends on YouTube's servers, content owner permissions, and third-party network conditions.
             </p>

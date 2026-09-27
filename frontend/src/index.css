@@ -24,7 +24,7 @@
   --error-subtle: #FBE9E7;
   --warning: #9A6100;
   --warning-subtle: #FBF0DA;
-  --player-black: #000000;
+  --player-black: 0 0 0;
   --scrim: rgba(15,18,25,0.50);
   --surface-container: #ebedf9;
   --surface-container-low: #f1f3ff;
@@ -54,7 +54,7 @@
   --error-subtle: #7F1D1D;
   --warning: #F59E0B;
   --warning-subtle: #3D3018;
-  --player-black: #030712;
+  --player-black: 3 7 18;
   --scrim: rgba(3,7,18,0.75);
   --surface-container: #111827;
   --surface-container-low: #0F172A;
@@ -70,6 +70,21 @@ body {
   font-family: 'Google Sans', Arial, sans-serif;
   overflow-x: hidden;
   transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.skeleton-block {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-hover);
+}
+
+.skeleton-block::after {
+  position: absolute;
+  inset: 0;
+  content: '';
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--bg-surface) 55%, transparent), transparent);
+  animation: skeletonShimmer 1.35s ease-in-out infinite;
 }
 
 button, a, input, textarea, select {
@@ -93,6 +108,10 @@ button, a, input, textarea, select {
 @keyframes pageFadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+@keyframes skeletonShimmer {
+  to { transform: translateX(100%); }
 }
 
 :where(button, a, input, textarea, select, [tabindex="0"]):focus-visible {
