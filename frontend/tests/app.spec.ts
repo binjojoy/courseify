@@ -3,6 +3,7 @@ import type { Page } from '@playwright/test';
 // Imported rather than hardcoded: seeding the wrong version here would pop the
 // release-notes modal over every test and fail them for the wrong reason.
 import { APP_VERSION } from '../src/config/app';
+import { stubControllablePlayer } from './stubs';
 
 const course = {
   id: 'course-test',
@@ -38,6 +39,30 @@ async function waitForFonts(page: Page) {
   ]));
   // One frame so the reflow triggered by the swap is committed to the DOM.
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+}
+
+/**
+ * Did the icon webfont actually arrive?
+ *
+ * Icon spans carry Material Symbols ligature names ("close", "backup") in their
+ * text content. If the font never loads, those names lay out as literal words
+ * and are far wider than the glyph they replace, so any horizontal-fit
+ * measurement taken in that state reports the font host's failure, not the app's
+ * CSS. `document.fonts.ready` cannot distinguish the two, so this asks for the
+ * family explicitly and then checks it.
+ *
+ * The explicit load matters: a full parallel run has eight browsers requesting
+ * the same CDN font at once, and `fonts.ready` resolving on a still-slow request
+ * would otherwise skip the assertion even though the font was about to land.
+ */
+async function iconFontLoaded(page: Page): Promise<boolean> {
+  return page.evaluate(async () => {
+    await Promise.race([
+      document.fonts.load('24px "Material Symbols Outlined"', 'close backup'),
+      new Promise<void>(resolve => setTimeout(resolve, 15000))
+    ]);
+    return document.fonts.check('24px "Material Symbols Outlined"');
+  });
 }
 
 async function seedCourse(page: Page) {
@@ -112,6 +137,16 @@ test('dashboard exposes seeded course state on mobile', async ({ page }) => {
   await expect(page.getByTestId('dashboard')).toBeVisible();
   await expect(page.getByTestId('course-card')).toContainText('Inspectable Course');
   await waitForFonts(page);
+
+  // The horizontal-fit measurement below is only meaningful with the icon font
+  // in place. See iconFontLoaded: without it this reports the font host being
+  // slow rather than a layout bug, and it fails intermittently under a full
+  // parallel run. Skipping says which it was, instead of guessing.
+  test.skip(
+    !(await iconFontLoaded(page)),
+    'icon webfont did not load, so horizontal fit cannot be measured'
+  );
+
   await expect(page.locator('body')).not.toHaveCSS('overflow-x', 'scroll');
   for (const width of [375, 768, 1024, 1440]) {
     await page.setViewportSize({ width, height: 900 });
@@ -197,6 +232,11 @@ test('course workspace stays within mobile, tablet, and desktop widths', async (
 
 test('AI study guide renders highlights and interactive flashcards', async ({ page }) => {
   await seedCourse(page);
+  // The real embed ends the video on its own, and autoplay-next is on by
+  // default, so the lesson advances mid-test. AISessionNotes resets its tab
+  // when the lesson changes, and the Highlights assertion below then lost its
+  // content intermittently. This test is about the study guide, not playback.
+  await stubControllablePlayer(page);
   const studyGuide = {
     oneSentenceSummary: 'A concise lesson summary.',
     keyTakeaways: ['State changes update the interface.'],
@@ -291,6 +331,7 @@ test('selecting a lesson initializes the YouTube player with its video id', asyn
 
 test('Gemini quota errors remain visible in the AI workspace', async ({ page }) => {
   await seedCourse(page);
+  await stubControllablePlayer(page);
   await stubGemini(page, [{ status: 429, message: 'Daily quota exceeded.' }]);
 
   await page.goto('/#/course/course-test');
@@ -366,6 +407,7 @@ const recoveredGuide = JSON.stringify({
 
 test('a transient Gemini capacity error is retried instead of shown as a failure', async ({ page }) => {
   await seedCourse(page);
+  await stubControllablePlayer(page);
   // The first attempt hits Google's "high demand" 503; the second succeeds.
   await stubGemini(page, [
     { status: 503, message: 'This model is currently experiencing high demand.' },
@@ -377,13 +419,22 @@ test('a transient Gemini capacity error is retried instead of shown as a failure
   await page.getByRole('button', { name: 'Generate study guide' }).click();
 
   // The guide arrives, so the user never has to press Generate again.
-  await expect(page.getByText('A recovered study guide.')).toBeVisible();
-  await expect(page.getByRole('alert')).toHaveCount(0);
+  //
+  // Budget, not patience: the app backs off with full jitter up to MAX_DELAY_MS
+  // (8s) before the second attempt, so a legitimate draw can exceed the default
+  // 5s assertion timeout. The sustained-failure test below needs the same
+  // budget, for the same reason.
+  await expect(page.getByText('A recovered study guide.')).toBeVisible({ timeout: 20_000 });
+  // Scoped to the study guide panel on purpose: the intent is "Gemini reported
+  // no error", and a page-wide role="alert" also matches the player's own
+  // failure panel, which is a different subsystem entirely.
+  await expect(page.getByRole('region', { name: 'AI session notes' }).getByRole('alert')).toHaveCount(0);
   expect(await geminiCalls(page)).toBe(2);
 });
 
 test('a sustained Gemini capacity error explains whose side it is on', async ({ page }) => {
   await seedCourse(page);
+  await stubControllablePlayer(page);
   await stubGemini(page, [{ status: 503, message: 'This model is currently experiencing high demand.' }]);
 
   await page.goto('/#/course/course-test');
@@ -403,6 +454,7 @@ test('a sustained Gemini capacity error explains whose side it is on', async ({ 
 
 test('a Gemini request that cannot succeed is not retried', async ({ page }) => {
   await seedCourse(page);
+  await stubControllablePlayer(page);
   await stubGemini(page, [{ status: 400, message: 'Malformed request.' }]);
 
   await page.goto('/#/course/course-test');
@@ -412,4 +464,56 @@ test('a Gemini request that cannot succeed is not retried', async ({ page }) => 
   await expect(page.getByRole('alert')).toContainText('Malformed request.');
   // Retrying a permanent failure would only burn the user's quota.
   expect(await geminiCalls(page)).toBe(1);
+});
+
+test('the backup reminder exports a file instead of navigating away', async ({ page }) => {
+  await seedCourse(page);
+  await page.goto('/#/dashboard');
+
+  const reminder = page.getByText('You have not exported a backup yet.');
+  await expect(reminder).toBeVisible();
+
+  // This button used to be labelled "How to back up" and its only action was to
+  // navigate to the home page, so it moved the user elsewhere and explained
+  // nothing. It now has to produce the file the reminder is asking for.
+  const download = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: 'Export backup' }).click()
+  ]).then(([event]) => event);
+
+  expect(download.suggestedFilename()).toMatch(/^courseify-backup-.*\.json$/);
+  // Still on the dashboard: pressing it must not navigate.
+  await expect(page).toHaveURL(/#\/dashboard/);
+  // The reminder is derived from the export stamp, so it should clear itself.
+  await expect(reminder).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem('courseify:last-backup-at'))).toBeTruthy();
+});
+
+test('the backup reminder explains what a backup covers and does not cover', async ({ page }) => {
+  await seedCourse(page);
+  await page.goto('/#/dashboard');
+
+  const toggle = page.getByRole('button', { name: 'How this works' });
+  const guide = page.locator('#backup-guide');
+  await expect(guide).toHaveCount(0);
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+  await toggle.click();
+  await expect(guide).toBeVisible();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+  // What is included.
+  await expect(guide).toContainText('Your courses and every lesson list');
+  await expect(guide).toContainText('All your lesson notes');
+  // What is not. A guide that implied otherwise would be worse than none: the
+  // Gemini key is a secret and AI guides are outside the export entirely.
+  await expect(guide).toContainText('never written to a backup');
+  await expect(guide).toContainText('AI study guides, which are not part of the export');
+  // How to restore, including the destructive option.
+  await expect(guide).toContainText('Import backup (JSON)');
+  await expect(guide).toContainText('Merge');
+  await expect(guide).toContainText('Replace');
+
+  await toggle.click();
+  await expect(guide).toHaveCount(0);
 });
